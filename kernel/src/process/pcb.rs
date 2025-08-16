@@ -1,10 +1,34 @@
-// Process Control Block (PCB) - Core process data structure
+// Process Control Block (PCB) - Core process data structure with optimized state management
 use x86_64::{VirtAddr, structures::paging::PageTable};
 use alloc::{vec::Vec, string::String, boxed::Box};
 use crate::memory::PageProtection;
+use core::mem::MaybeUninit;
 
-// x86_64 CPU context for process switching
-#[derive(Debug, Clone, Copy)]
+// FPU/SSE state for FXSAVE/FXRSTOR (512 bytes)
+#[repr(C, align(16))]
+pub struct FpuState {
+    pub fcw: u16,      // FPU control word
+    pub fsw: u16,      // FPU status word
+    pub ftw: u8,       // FPU tag word
+    pub reserved1: u8,
+    pub fop: u16,      // FPU opcode
+    pub fip: u64,      // FPU instruction pointer
+    pub fdp: u64,      // FPU data pointer
+    pub mxcsr: u32,    // SSE control/status
+    pub mxcsr_mask: u32,
+    pub st: [[u8; 16]; 8],   // FPU registers (80-bit in 128-bit slots)
+    pub xmm: [[u8; 16]; 16], // SSE registers
+    pub reserved2: [u8; 96],
+}
+
+// Extended state for modern processors
+pub struct ExtendedState {
+    pub xsave_area: Option<Box<crate::process::context_switch::XSaveArea>>,
+    pub fpu_state: Option<Box<FpuState>>,
+}
+
+// x86_64 CPU context for process switching with optimizations
+#[derive(Clone)]
 #[repr(C)]
 pub struct CpuContext {
     // General purpose registers
@@ -40,7 +64,32 @@ pub struct CpuContext {
     pub ss: u16,
     
     // Control registers
-    pub cr3: u64,  // Page table base
+    pub cr3: u64,  // Page table base with PCID
+    
+    // FS/GS base for FSGSBASE optimization
+    pub fs_base: u64,
+    pub gs_base: u64,
+    
+    // Extended state (FPU/SSE/AVX)
+    pub xsave_area: Option<Box<crate::process::context_switch::XSaveArea>>,
+    pub fpu_state: Option<Box<FpuState>>,
+    
+    // Thread ID for lazy FPU tracking
+    pub thread_id: usize,
+    
+    // Performance counters
+    pub perf_counters: PerfCounters,
+}
+
+// Performance counters for context switch profiling
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PerfCounters {
+    pub context_switches: u64,
+    pub fpu_saves: u64,
+    pub fpu_restores: u64,
+    pub tlb_flushes: u64,
+    pub cycles_in_kernel: u64,
+    pub cycles_in_user: u64,
 }
 
 impl CpuContext {
@@ -59,6 +108,44 @@ impl CpuContext {
             gs: 0x10,
             ss: 0x10,
             cr3: 0,
+            fs_base: 0,
+            gs_base: 0,
+            xsave_area: None,
+            fpu_state: None,
+            thread_id: 0,
+            perf_counters: PerfCounters::default(),
+        }
+    }
+    
+    pub fn init_fpu_state(&mut self) {
+        use crate::cpu::get_info;
+        let cpu_info = get_info();
+        
+        if cpu_info.features.contains(crate::cpu::CpuFeatures::XSAVE) {
+            // Allocate XSAVE area for modern processors
+            self.xsave_area = Some(Box::new(crate::process::context_switch::XSaveArea::new()));
+        } else {
+            // Allocate FXSAVE area for older processors
+            self.fpu_state = Some(Box::new(FpuState::default()));
+        }
+    }
+}
+
+impl Default for FpuState {
+    fn default() -> Self {
+        Self {
+            fcw: 0x037F,     // Default FPU control word
+            fsw: 0,
+            ftw: 0,
+            reserved1: 0,
+            fop: 0,
+            fip: 0,
+            fdp: 0,
+            mxcsr: 0x1F80,   // Default SSE control word
+            mxcsr_mask: 0xFFFF,
+            st: [[0; 16]; 8],
+            xmm: [[0; 16]; 16],
+            reserved2: [0; 96],
         }
     }
 }

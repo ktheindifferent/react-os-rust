@@ -28,7 +28,7 @@ pub enum FileSystemError {
     PermissionDenied,
     AlreadyExists,
     InvalidPath,
-    IoError,
+    IoError(String),
     NotSupported,
     FileNotFound,
 }

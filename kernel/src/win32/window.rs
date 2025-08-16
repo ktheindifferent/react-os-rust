@@ -256,8 +256,8 @@ impl WindowManager {
             menu,
             instance,
             wnd_proc: Some(wnd_proc),
-            thread_id: 1, // TODO: Get from current thread
-            process_id: 1, // TODO: Get from current process
+            thread_id: get_current_thread_id(),
+            process_id: get_current_process_id(),
             children: Vec::new(),
             z_order: 0,
         };
@@ -684,4 +684,27 @@ pub extern "C" fn SetActiveWindow(hwnd: HANDLE) -> HANDLE {
 #[no_mangle]
 pub extern "C" fn SetFocus(hwnd: HANDLE) -> HANDLE {
     WINDOW_MANAGER.lock().set_focus(hwnd).unwrap_or(Handle::NULL)
+}
+
+// Helper functions to get current thread and process IDs
+fn get_current_thread_id() -> DWORD {
+    use crate::process::thread::THREAD_MANAGER;
+    
+    if let Some(thread_id) = THREAD_MANAGER.lock().get_current_thread() {
+        thread_id.0
+    } else {
+        // Default to thread ID 1 if no current thread
+        1
+    }
+}
+
+fn get_current_process_id() -> DWORD {
+    use crate::process::PROCESS_MANAGER;
+    
+    if let Some(process_id) = PROCESS_MANAGER.lock().current_process {
+        process_id.0
+    } else {
+        // Default to process ID 1 if no current process
+        1
+    }
 }

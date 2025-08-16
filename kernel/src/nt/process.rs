@@ -263,12 +263,42 @@ impl ProcessManager {
     }
 
     pub fn terminate_process(&mut self, process_id: ProcessId, exit_code: u32) -> NtStatus {
-        if let Some(process_arc) = self.processes.get(&process_id) {
+        if let Some(process_arc) = self.processes.get(&process_id).cloned() {
             if let Some(mut process) = process_arc.try_lock() {
+                // Set process state to terminated
                 process.terminate(exit_code);
                 
-                // TODO: Terminate all threads in the process
-                // TODO: Clean up resources
+                // Terminate all threads in the process
+                let thread_ids: Vec<ThreadId> = process.threads.keys().copied().collect();
+                for thread_id in thread_ids {
+                    // Remove thread from process's thread list
+                    process.remove_thread(thread_id);
+                    
+                    // Notify thread manager to clean up the thread
+                    self.terminate_thread(thread_id);
+                }
+                
+                // Clean up virtual memory if allocated
+                if process.virtual_memory_manager.is_some() {
+                    process.virtual_memory_manager = None;
+                }
+                
+                // Clear handle table
+                process.handle_table.clear();
+                
+                // Update memory counters
+                process.working_set_size = 0;
+                process.paged_pool_usage = 0;
+                process.non_paged_pool_usage = 0;
+                process.pagefile_usage = 0;
+                process.private_page_count = 0;
+                
+                drop(process);
+                
+                // Remove from process list if no references remain
+                if Arc::strong_count(&process_arc) == 1 {
+                    self.processes.remove(&process_id);
+                }
                 
                 NtStatus::Success
             } else {
@@ -276,6 +306,21 @@ impl ProcessManager {
             }
         } else {
             NtStatus::InvalidCid
+        }
+    }
+    
+    fn terminate_thread(&self, thread_id: ThreadId) {
+        // Notify the thread manager to clean up the thread
+        // This would normally interact with the thread manager subsystem
+        use crate::process::thread::THREAD_MANAGER;
+        use crate::process::ThreadId as ProcessThreadId;
+        
+        if let Some(mut thread_manager) = THREAD_MANAGER.try_lock() {
+            // Convert from NT ThreadId to process ThreadId
+            let process_thread_id = ProcessThreadId(thread_id.0);
+            if let Some(thread) = thread_manager.get_thread_mut(process_thread_id) {
+                thread.state = crate::process::thread::ThreadState::Terminated;
+            }
         }
     }
 

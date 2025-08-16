@@ -31,7 +31,7 @@ pub fn sys_read(fd: usize, buf: usize, count: usize) -> Result<usize, usize> {
             let mut bytes_read = 0;
             
             for i in 0..count.min(1) {
-                if let Some(c) = crate::interrupts::read_key() {
+                if let Some(c) = crate::interrupts::keyboard::read_char() {
                     buffer[i] = c;
                     bytes_read += 1;
                 } else {

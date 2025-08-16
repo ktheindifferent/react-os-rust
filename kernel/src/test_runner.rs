@@ -100,11 +100,45 @@ impl TestRunner {
     }
 }
 
-// Hardware test suites
+// Comprehensive test suites
 pub fn run_all_tests() {
-    println!("\n Starting Hardware Component Tests...\n");
+    println!("\n===== Starting Comprehensive OS Test Suite =====\n");
     
     let mut runner = TestRunner::new();
+    
+    // Memory management tests
+    println!("\n[Memory Management Tests]");
+    use crate::tests::memory_tests::*;
+    run_memory_tests(&mut runner);
+    run_slab_allocator_tests(&mut runner);
+    run_frame_allocator_tests(&mut runner);
+    run_virtual_memory_tests(&mut runner);
+    run_demand_paging_tests(&mut runner);
+    
+    // Process and scheduler tests
+    println!("\n[Process & Scheduler Tests]");
+    use crate::tests::scheduler_tests::*;
+    run_scheduler_tests(&mut runner);
+    run_context_switch_tests(&mut runner);
+    run_process_tests(&mut runner);
+    run_thread_tests(&mut runner);
+    
+    // File system tests
+    println!("\n[File System Tests]");
+    use crate::tests::filesystem_tests::*;
+    run_filesystem_tests(&mut runner);
+    run_fat32_tests(&mut runner);
+    run_ntfs_tests(&mut runner);
+    run_vfs_tests(&mut runner);
+    run_file_ops_tests(&mut runner);
+    
+    // Network stack tests
+    println!("\n[Network Stack Tests]");
+    use crate::tests::network_tests::*;
+    run_network_tests(&mut runner);
+    
+    // Hardware driver tests
+    println!("\n[Hardware Driver Tests]");
     
     // Sound tests
     run_sound_tests(&mut runner);
@@ -116,6 +150,7 @@ pub fn run_all_tests() {
     run_pcie_tests(&mut runner);
     
     // Integration tests
+    println!("\n[Integration Tests]");
     run_integration_tests(&mut runner);
     
     runner.summary();

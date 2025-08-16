@@ -248,7 +248,7 @@ pub fn sys_mkdir(path: &str, _mode: u32) -> Result<(), FileSystemError> {
     
     // This would delegate to the appropriate filesystem
     // For now, return not implemented
-    Err(FileSystemError::IoError)
+    Err(FileSystemError::IoError(String::from("Not implemented")))
 }
 
 pub fn sys_readdir(path: &str) -> Result<Vec<FileInfo>, FileSystemError> {
