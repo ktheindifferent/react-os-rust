@@ -16,6 +16,7 @@ mod memory;
 mod allocator;
 mod cpu;
 mod sync;
+mod smp;
 mod nt;
 mod win32;
 mod process;
@@ -87,6 +88,12 @@ pub extern "C" fn _start() -> ! {
     cpu::init();
     cpu::get_info().print_info();
     serial_println!("Stage 5d: CPU detected");
+    
+    // Initialize SMP (Symmetric Multiprocessing)
+    println!("Initializing SMP support...");
+    serial_println!("Stage 5d1: Initializing SMP");
+    smp::init_bsp();
+    serial_println!("Stage 5d2: BSP initialized");
     
     // Initialize security subsystem
     println!("Initializing security features...");

@@ -1,4 +1,5 @@
 pub mod scheduler;
+pub mod smp_scheduler;
 pub mod thread;
 pub mod pcb;
 pub mod elf;
