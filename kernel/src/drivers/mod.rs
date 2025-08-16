@@ -9,6 +9,7 @@ pub mod display;
 pub mod input;
 pub mod power;
 pub mod disk;
+pub mod mouse;
 
 use alloc::string::String;
 use alloc::vec::Vec;

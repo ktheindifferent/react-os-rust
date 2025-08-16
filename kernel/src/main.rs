@@ -14,6 +14,8 @@ mod interrupts;
 mod gdt;
 mod memory;
 mod allocator;
+mod cpu;
+mod sync;
 mod nt;
 mod win32;
 mod process;
@@ -30,6 +32,8 @@ mod ahci;
 mod sound;
 mod nvme;
 mod pcie;
+mod syscall;
+mod timer;
 
 #[cfg(test)]
 mod tests;
@@ -71,6 +75,13 @@ pub extern "C" fn _start() -> ! {
     serial_println!("Stage 5: About to init heap allocator");
     allocator::init_heap();
     serial_println!("Stage 5b: Heap initialized");
+    
+    // Detect CPU features
+    println!("Detecting CPU features...");
+    serial_println!("Stage 5c: Detecting CPU");
+    cpu::init();
+    cpu::get_info().print_info();
+    serial_println!("Stage 5d: CPU detected");
     
     // Initialize keyboard before enabling interrupts
     println!("Initializing keyboard...");
@@ -310,7 +321,39 @@ pub fn main_loop() -> ! {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    // Disable interrupts to prevent further issues
+    x86_64::instructions::interrupts::disable();
+    
+    // Print to both VGA and serial for better debugging
+    serial_println!("\n\n=== KERNEL PANIC ===");
+    println!("\n\n=== KERNEL PANIC ===");
+    
+    // Print panic information
+    serial_println!("{}", info);
     println!("{}", info);
+    
+    // Try to print CPU state
+    serial_println!("\nCPU State at panic:");
+    unsafe {
+        let rsp: u64;
+        let rbp: u64;
+        let rip: u64;
+        core::arch::asm!(
+            "mov {}, rsp",
+            "mov {}, rbp", 
+            "lea {}, [rip]",
+            out(reg) rsp,
+            out(reg) rbp,
+            out(reg) rip,
+        );
+        serial_println!("  RSP: {:#018x}", rsp);
+        serial_println!("  RBP: {:#018x}", rbp);
+        serial_println!("  RIP: {:#018x}", rip);
+    }
+    
+    serial_println!("\nSystem halted.");
+    println!("\nSystem halted.");
+    
     hlt_loop();
 }
 

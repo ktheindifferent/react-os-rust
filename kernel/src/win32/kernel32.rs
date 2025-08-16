@@ -153,7 +153,13 @@ pub extern "C" fn VirtualAlloc(
     }
     
     // Allocate memory (simplified - just use heap)
-    let layout = core::alloc::Layout::from_size_align(size, 4096).unwrap();
+    let layout = match core::alloc::Layout::from_size_align(size, 4096) {
+        Ok(layout) => layout,
+        Err(_) => {
+            unsafe { SetLastError(87); } // ERROR_INVALID_PARAMETER
+            return core::ptr::null_mut();
+        }
+    };
     unsafe {
         let ptr = alloc::alloc::alloc(layout);
         if ptr.is_null() {

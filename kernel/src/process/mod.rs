@@ -60,7 +60,7 @@ impl Process {
 pub struct ProcessManager {
     processes: Vec<Process>,
     next_process_id: u32,
-    current_process: Option<ProcessId>,
+    pub current_process: Option<ProcessId>,
 }
 
 impl ProcessManager {

@@ -4,6 +4,10 @@ pub mod physical;
 pub mod virtual_memory;
 pub mod demand_paging;
 pub mod frame_allocator;
+pub mod safe_access;
+pub mod optimized;
+pub mod slab;
+pub mod userspace;
 
 use x86_64::{
     structures::paging::{PageTable, OffsetPageTable, PhysFrame, Size4KiB},

@@ -5,6 +5,10 @@ use spin::{self, Mutex};
 use crate::{println, serial_println};
 use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
 
+pub mod keyboard;
+
+pub use keyboard::read_key;
+
 pub const PIC_1_OFFSET: u8 = 32;
 pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
 
@@ -157,9 +161,24 @@ extern "x86-interrupt" fn spurious_interrupt_handler_pic2(
 }
 
 extern "x86-interrupt" fn double_fault_handler(
-    stack_frame: InterruptStackFrame, _error_code: u64) -> !
+    stack_frame: InterruptStackFrame, error_code: u64) -> !
 {
-    panic!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
+    // Double fault is critical - try to save as much info as possible
+    serial_println!("\n=== CRITICAL: DOUBLE FAULT EXCEPTION ===");
+    serial_println!("Error Code: {:#x}", error_code);
+    serial_println!("Stack Frame: {:#?}", stack_frame);
+    
+    // Try to get more CPU state info
+    let cr2: u64;
+    let cr3: u64;
+    unsafe {
+        core::arch::asm!("mov {}, cr2", out(reg) cr2);
+        core::arch::asm!("mov {}, cr3", out(reg) cr3);
+    }
+    serial_println!("CR2 (Page Fault Address): {:#x}", cr2);
+    serial_println!("CR3 (Page Table Base): {:#x}", cr3);
+    
+    panic!("EXCEPTION: DOUBLE FAULT - System cannot recover");
 }
 
 // Global timer tick counter
@@ -180,6 +199,11 @@ extern "x86-interrupt" fn timer_interrupt_handler(
         *counter += 1;
         *counter
     };
+    
+    // Update system timer
+    if let Some(mut timer) = crate::timer::TIMER.try_lock() {
+        timer.tick();
+    }
     
     // Call process scheduler every 10 ticks, but use try_lock to avoid deadlocks
     if ticks % 10 == 0 {  // Schedule every 10 ticks
@@ -252,7 +276,7 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
                                 'l' | 'L' => {
                                     // Clear screen
                                     crate::vga_buffer::clear_screen();
-                                    if let Some(handler) = *KEYBOARD_HANDLER.lock() {
+                                    if let Some(_handler) = *KEYBOARD_HANDLER.lock() {
                                         // Re-show prompt after clear
                                         crate::print!("ReactOS> ");
                                     }
@@ -348,9 +372,33 @@ extern "x86-interrupt" fn page_fault_handler(
 
     let addr = Cr2::read();
     
+    // Check if this is a stack overflow
+    let rsp = stack_frame.stack_pointer.as_u64();
+    let fault_addr = addr.as_u64();
+    
+    // Typical stack overflow: fault address is close to stack pointer
+    if fault_addr.saturating_sub(rsp) < 0x1000 || rsp.saturating_sub(fault_addr) < 0x1000 {
+        serial_println!("\n=== STACK OVERFLOW DETECTED ===");
+        serial_println!("Stack Pointer: {:#x}", rsp);
+        serial_println!("Fault Address: {:#x}", fault_addr);
+        serial_println!("Instruction Pointer: {:#x}", stack_frame.instruction_pointer.as_u64());
+        println!("\n=== STACK OVERFLOW DETECTED ===");
+        println!("Stack exhausted at address: {:#x}", fault_addr);
+        panic!("Stack overflow - increase stack size or reduce recursion");
+    }
+    
     // Try to handle the page fault with demand paging
     if let Err(e) = crate::memory::demand_paging::handle_page_fault(addr, error_code.bits()) {
         // Page fault couldn't be handled
+        serial_println!("\n=== PAGE FAULT ===");
+        serial_println!("Address: {:?}", addr);
+        serial_println!("Error Code: {:?}", error_code);
+        serial_println!("  Present: {}", error_code.contains(PageFaultErrorCode::PROTECTION_VIOLATION));
+        serial_println!("  Write: {}", error_code.contains(PageFaultErrorCode::CAUSED_BY_WRITE));
+        serial_println!("  User mode: {}", error_code.contains(PageFaultErrorCode::USER_MODE));
+        serial_println!("  Instruction fetch: {}", error_code.contains(PageFaultErrorCode::INSTRUCTION_FETCH));
+        serial_println!("Handler Error: {}", e);
+        
         println!("EXCEPTION: PAGE FAULT");
         println!("Accessed Address: {:?}", addr);
         println!("Error Code: {:?}", error_code);

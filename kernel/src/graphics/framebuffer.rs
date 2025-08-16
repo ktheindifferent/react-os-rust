@@ -5,6 +5,12 @@ use alloc::boxed::Box;
 use spin::Mutex;
 use core::ptr;
 
+impl Color {
+    pub fn to_argb8888(&self) -> u32 {
+        ((self.a as u32) << 24) | ((self.r as u32) << 16) | ((self.g as u32) << 8) | (self.b as u32)
+    }
+}
+
 // Framebuffer trait for different buffer types
 pub trait FramebufferOps {
     fn width(&self) -> usize;

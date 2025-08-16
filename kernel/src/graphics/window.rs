@@ -7,7 +7,8 @@ use spin::Mutex;
 use lazy_static::lazy_static;
 
 // Window ID type
-pub type WindowId = usize;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowId(pub u32);
 
 // Window flags
 bitflags::bitflags! {
@@ -84,7 +85,16 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(id: WindowId, title: String, rect: Rect, flags: WindowFlags) -> Self {
+    pub fn new(x: i32, y: i32, width: u32, height: u32, title: String) -> Self {
+        Self::new_with_flags(
+            WindowId(0), 
+            title, 
+            Rect::new(x, y, width, height),
+            WindowFlags::VISIBLE | WindowFlags::RESIZABLE | WindowFlags::MOVABLE | WindowFlags::CLOSABLE
+        )
+    }
+    
+    pub fn new_with_flags(id: WindowId, title: String, rect: Rect, flags: WindowFlags) -> Self {
         let mut window = Self {
             id,
             title,
@@ -325,14 +335,33 @@ impl WindowManager {
     pub fn new(width: u32, height: u32) -> Self {
         Self {
             windows: Vec::new(),
-            next_window_id: 1,
+            next_window_id: WindowId(1),
             focused_window: None,
             desktop_rect: Rect::new(0, 0, width, height),
             z_order_counter: 0,
         }
     }
     
-    pub fn create_window(
+    pub fn create_window(&mut self, window: Window) -> WindowId {
+        let id = WindowId(self.next_window_id.0);
+        self.next_window_id = WindowId(self.next_window_id.0 + 1);
+        
+        let mut boxed_window = Box::new(window);
+        boxed_window.id = id;
+        
+        // Set initial z-order
+        self.z_order_counter += 1;
+        boxed_window.z_order = self.z_order_counter;
+        
+        self.windows.push(boxed_window);
+        
+        // Auto-focus new window
+        self.focus_window(id);
+        
+        id
+    }
+    
+    pub fn create_window_with_params(
         &mut self,
         title: String,
         x: i32,
@@ -342,10 +371,10 @@ impl WindowManager {
         flags: WindowFlags,
     ) -> WindowId {
         let id = self.next_window_id;
-        self.next_window_id += 1;
+        self.next_window_id = WindowId(self.next_window_id.0 + 1);
         
         let rect = Rect::new(x, y, width, height);
-        let mut window = Box::new(Window::new(id, title, rect, flags));
+        let mut window = Box::new(Window::new_with_flags(id, title, rect, flags));
         
         // Set initial z-order
         self.z_order_counter += 1;
@@ -515,8 +544,8 @@ pub fn create_window(
                    WindowFlags::HAS_TITLE_BAR | 
                    WindowFlags::HAS_BORDER;
         
-        manager.create_window(String::from(title), x, y, width, height, flags)
+        manager.create_window_with_params(String::from(title), x, y, width, height, flags)
     } else {
-        0
+        WindowId(0)
     }
 }

@@ -597,7 +597,7 @@ impl PcieController {
     
     pub fn find_devices_by_class(&self, class: u8, subclass: Option<u8>) -> Vec<&PciDevice> {
         self.devices.iter()
-            .filter(|d| d.class == class && (subclass.is_none() || d.subclass == subclass.unwrap()))
+            .filter(|d| d.class == class && subclass.map_or(true, |sc| d.subclass == sc))
             .collect()
     }
     

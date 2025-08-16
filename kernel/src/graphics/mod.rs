@@ -4,6 +4,7 @@ pub mod framebuffer;
 pub mod font;
 pub mod window;
 pub mod compositor;
+pub mod desktop;
 
 use alloc::vec::Vec;
 use spin::Mutex;

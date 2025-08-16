@@ -157,18 +157,13 @@ impl Color {
         ((self.r as u32) << 16) | ((self.g as u32) << 8) | (self.b as u32)
     }
     
-    // Convert to 32-bit ARGB8888 format
-    pub fn to_argb8888(&self) -> u32 {
-        ((self.a as u32) << 24) | ((self.r as u32) << 16) | 
-        ((self.g as u32) << 8) | (self.b as u32)
-    }
 }
 
 // VESA graphics driver
 pub struct VesaDriver {
-    framebuffer: Option<Framebuffer>,
-    current_mode: Option<u16>,
-    available_modes: Vec<u16>,
+    pub framebuffer: Option<Framebuffer>,
+    pub current_mode: Option<u16>,
+    pub available_modes: Vec<u16>,
 }
 
 impl VesaDriver {

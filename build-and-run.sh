@@ -7,9 +7,8 @@ echo "Rust-based ReactOS Build and Test System"
 echo "========================================="
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUST_OS_DIR="$SCRIPT_DIR/rust-os"
 
-cd "$RUST_OS_DIR"
+cd "$SCRIPT_DIR"
 
 if ! command -v rustup &> /dev/null; then
     echo "Error: Rust is not installed. Please install Rust first:"

@@ -18,6 +18,7 @@ pic8259 = { workspace = true }
 pc-keyboard = { workspace = true }
 linked_list_allocator = "0.10"
 bitflags = "2.0"
+raw-cpuid = "11.0"
 
 [dependencies.lazy_static]
 version = "1.4"
