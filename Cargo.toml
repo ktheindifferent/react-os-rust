@@ -1,0 +1,20 @@
+[workspace]
+members = ["kernel"]
+resolver = "2"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = "z"
+
+[workspace.dependencies]
+bootloader = "0.9"
+x86_64 = "0.14"
+volatile = "0.2"
+spin = "0.9"
+uart_16550 = "0.2"
+pic8259 = "0.10"
+pc-keyboard = "0.5"

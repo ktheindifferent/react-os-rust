@@ -1,0 +1,238 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Bootloader and kernel images (build artifacts)
+*.bin
+*.img
+*.iso
+bootimage-*.bin
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.*.swp
+.*.swo
+*.sublime-workspace
+*.sublime-project
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows system files
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux system files
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Log files
+*.log
+/kernel_output.log
+/test_output.txt
+/kernel_test_output.txt
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+/tmp/
+/temp/
+
+# QEMU files
+*.qcow2
+*.vmdk
+*.vdi
+*.vhd
+*.vhdx
+
+# Documentation build files
+/docs/_build/
+/docs/.doctrees/
+*.pdf
+
+# Python cache (if any Python scripts are used)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Test artifacts
+/test-results/
+/coverage/
+*.gcda
+*.gcno
+*.gcov
+
+# Backup files
+*.orig
+*.rej
+*.backup
+
+# Core dumps
+core
+core.*
+vgcore.*
+
+# CTags
+tags
+TAGS
+.tags
+.TAGS
+
+# GDB files
+.gdb_history
+.gdbinit
+
+# Valgrind files
+*.memcheck
+*.callgrind
+*.cachegrind
+
+# Performance profiling
+perf.data
+perf.data.old
+*.prof
+
+# Dependencies downloaded by build scripts
+/dependencies/
+/vendor/
+
+# Custom build directories
+/build/
+/dist/
+/out/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Rust workspace
+/target-*/
+
+# Cargo configuration (local overrides)
+/.cargo/config.toml
+/.cargo/config
+
+# RLS (Rust Language Server) files
+/rls/
+
+# rust-analyzer
+/rust-analyzer/
+
+# Bootimage configuration (keep the main one, ignore local overrides)
+/bootimage-*.toml
+
+# LLVM IR files
+*.ll
+*.bc
+
+# Assembly files (generated)
+*.s
+!boot/*.s
+!src/**/*.s
+
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Package files
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.rar
+*.7z
+
+# Node modules (if any web UI is added later)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Ignore test executables but keep test scripts
+/test_*.exe
+!/test_*.sh
+
+# Keep important configuration files
+!Cargo.toml
+!rust-toolchain.toml
+!x86_64-rust_os.json
+!.cargo/config.toml
