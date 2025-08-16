@@ -8,6 +8,7 @@ pub mod safe_access;
 pub mod optimized;
 pub mod slab;
 pub mod userspace;
+pub mod protection;
 
 use x86_64::{
     structures::paging::{PageTable, OffsetPageTable, PhysFrame, Size4KiB},
@@ -21,6 +22,9 @@ pub const SYSTEM_SPACE_START: u64 = 0xFFFF_8000_0000_0000;
 
 // Physical memory offset for accessing physical memory directly
 pub const PHYS_MEM_OFFSET: u64 = 0xFFFF_8000_0000_0000;
+
+// Export memory protection functions
+pub use protection::{get_mapper, get_frame_allocator};
 
 // NT-style memory protection constants
 #[repr(u32)]

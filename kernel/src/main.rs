@@ -35,6 +35,7 @@ mod nvme;
 mod pcie;
 mod syscall;
 mod timer;
+mod security;
 mod arch;
 mod perf;
 mod numa;
@@ -87,19 +88,26 @@ pub extern "C" fn _start() -> ! {
     cpu::get_info().print_info();
     serial_println!("Stage 5d: CPU detected");
     
+    // Initialize security subsystem
+    println!("Initializing security features...");
+    serial_println!("Stage 5e: Initializing security");
+    let security_config = security::SecurityConfig::default();
+    security::init(security_config);
+    serial_println!("Stage 5f: Security initialized");
+    
     // Initialize performance monitoring
     println!("Initializing performance monitoring...");
-    serial_println!("Stage 5e: Initializing PMU");
+    serial_println!("Stage 5g: Initializing PMU");
     perf::PMU_INSTANCE.lock().init();
     
     // Initialize NUMA subsystem
     println!("Initializing NUMA subsystem...");
-    serial_println!("Stage 5f: Initializing NUMA");
+    serial_println!("Stage 5h: Initializing NUMA");
     numa::init();
     
     // Initialize fast syscall mechanism
     println!("Initializing fast syscall (SYSCALL/SYSRET)...");
-    serial_println!("Stage 5g: Initializing fast syscall");
+    serial_println!("Stage 5i: Initializing fast syscall");
     arch::x86_64::fast_syscall::init();
     
     // Initialize keyboard before enabling interrupts
