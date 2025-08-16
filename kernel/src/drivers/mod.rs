@@ -11,6 +11,7 @@ pub mod power;
 pub mod disk;
 pub mod mouse;
 pub mod bluetooth;
+pub mod wifi;
 
 use alloc::string::String;
 use alloc::vec::Vec;
