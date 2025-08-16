@@ -166,3 +166,31 @@ pub fn nt_free_virtual_memory(
     *region_size = 0;
     Ok(())
 }
+
+// Helper functions for monitoring module
+use core::sync::atomic::{AtomicU64, Ordering};
+
+static TOTAL_MEMORY: AtomicU64 = AtomicU64::new(8 * 1024 * 1024 * 1024); // 8GB default
+static USED_MEMORY: AtomicU64 = AtomicU64::new(0);
+static FREE_MEMORY: AtomicU64 = AtomicU64::new(8 * 1024 * 1024 * 1024);
+
+pub fn get_total_memory() -> u64 {
+    TOTAL_MEMORY.load(Ordering::Relaxed)
+}
+
+pub fn get_used_memory() -> u64 {
+    USED_MEMORY.load(Ordering::Relaxed)
+}
+
+pub fn get_available_memory() -> u64 {
+    FREE_MEMORY.load(Ordering::Relaxed)
+}
+
+pub fn get_free_memory() -> u64 {
+    FREE_MEMORY.load(Ordering::Relaxed)
+}
+
+pub fn update_memory_usage(used: u64, free: u64) {
+    USED_MEMORY.store(used, Ordering::Relaxed);
+    FREE_MEMORY.store(free, Ordering::Relaxed);
+}

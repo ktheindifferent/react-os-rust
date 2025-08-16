@@ -525,3 +525,24 @@ pub fn init() {
         serial_println!("USB: Failed to initialize: {}", e);
     });
 }
+
+// Helper functions for monitoring/diagnostics module
+pub fn enumerate_devices() -> Option<Vec<device::UsbDeviceInfo>> {
+    let manager = USB_MANAGER.lock();
+    let devices = manager.get_devices();
+    
+    if devices.is_empty() {
+        return None;
+    }
+    
+    let mut device_infos = Vec::new();
+    for device in devices {
+        device_infos.push(device::UsbDeviceInfo {
+            vendor_id: device.device_descriptor.vendor_id,
+            product_id: device.device_descriptor.product_id,
+            driver: None,
+        });
+    }
+    
+    Some(device_infos)
+}

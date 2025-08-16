@@ -1,5 +1,7 @@
 use core::arch::x86_64::{__cpuid, __cpuid_count};
 use bitflags::bitflags;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 bitflags! {
     pub struct CpuFeatures: u64 {
@@ -295,6 +297,53 @@ pub fn rdrand() -> Option<u64> {
     } else {
         None
     }
+}
+
+// Helper functions for monitoring module
+pub fn current_cpu_id() -> u32 {
+    // In a real implementation, this would use APIC ID or similar
+    // For now, return 0 for single-core
+    0
+}
+
+pub fn cpu_count() -> usize {
+    get_info().physical_cores as usize
+}
+
+pub fn thread_count() -> usize {
+    get_info().logical_cores as usize
+}
+
+pub fn get_vendor() -> Option<String> {
+    let info = get_info();
+    Some(String::from_utf8_lossy(&info.vendor).trim_end_matches('\0').to_string())
+}
+
+pub fn get_model() -> Option<String> {
+    let info = get_info();
+    Some(String::from_utf8_lossy(&info.processor_brand).trim_end_matches('\0').to_string())
+}
+
+pub fn get_frequency_mhz() -> u32 {
+    // Placeholder - would calculate from TSC or CPUID
+    2400
+}
+
+pub fn get_features() -> Vec<String> {
+    let mut features = Vec::new();
+    let info = get_info();
+    
+    if info.features.contains(CpuFeatures::SSE) { features.push("SSE".to_string()); }
+    if info.features.contains(CpuFeatures::SSE2) { features.push("SSE2".to_string()); }
+    if info.features.contains(CpuFeatures::AVX) { features.push("AVX".to_string()); }
+    if info.features.contains(CpuFeatures::AVX2) { features.push("AVX2".to_string()); }
+    
+    features
+}
+
+pub fn get_cpu_usage() -> u64 {
+    // Placeholder - would calculate from performance counters
+    50
 }
 
 // Get current CPU ID (for multi-core support)

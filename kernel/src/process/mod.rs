@@ -48,6 +48,15 @@ impl Process {
             children: Vec::new(),
         }
     }
+    
+    // Helper methods for monitoring module
+    pub fn pid(&self) -> u32 {
+        self.id.0
+    }
+    
+    pub fn current_thread_id(&self) -> u32 {
+        self.threads.first().map(|t| t.0).unwrap_or(0)
+    }
 
     pub fn add_thread(&mut self, thread_id: ThreadId) {
         self.threads.push(thread_id);
@@ -124,4 +133,11 @@ impl ProcessManager {
 
 lazy_static! {
     pub static ref PROCESS_MANAGER: Mutex<ProcessManager> = Mutex::new(ProcessManager::new());
+}
+
+// Helper function for monitoring module
+pub fn current_process() -> Option<Process> {
+    // In a real implementation, this would return the currently running process
+    // For now, return None to indicate kernel context
+    None
 }

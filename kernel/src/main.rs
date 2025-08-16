@@ -45,6 +45,7 @@ mod thermal;
 mod hypervisor;
 mod container;
 mod debug;  // Advanced debugging infrastructure
+mod monitoring;
 
 #[cfg(test)]
 mod tests;
@@ -142,9 +143,15 @@ pub extern "C" fn _start() -> ! {
     
     // Initialize advanced debugging infrastructure
     println!("Initializing debugging infrastructure...");
-    serial_println!("Stage 5j: Initializing debug subsystem");
+    serial_println!("Stage 5l: Initializing debug subsystem");
     debug::init();
-    serial_println!("Stage 5k: Debug subsystem initialized");
+    serial_println!("Stage 5m: Debug subsystem initialized");
+    
+    // Initialize monitoring and telemetry subsystem
+    println!("Initializing system monitoring and telemetry...");
+    serial_println!("Stage 5n: Initializing monitoring");
+    monitoring::init();
+    serial_println!("Stage 5o: Monitoring initialized");
     
     // Initialize keyboard before enabling interrupts
     println!("Initializing keyboard...");
