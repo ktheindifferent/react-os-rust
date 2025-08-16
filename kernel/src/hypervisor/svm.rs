@@ -308,7 +308,8 @@ pub fn enable_svm() -> Result<(), HypervisorError> {
         let efer_val = efer.read();
         efer.write(efer_val | (1 << 12));
         
-        let hsave_pa = alloc::vec![0u8; 4096];
+        use alloc::vec;
+        let hsave_pa = vec![0u8; 4096];
         let hsave_msr = Msr::new(MSR_VM_HSAVE_PA);
         hsave_msr.write(hsave_pa.as_ptr() as u64);
     }

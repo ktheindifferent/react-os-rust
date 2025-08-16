@@ -388,7 +388,8 @@ pub fn disable_vmx() -> Result<(), HypervisorError> {
 }
 
 fn alloc_vmxon_region() -> u64 {
-    let mut region = alloc::vec![0u8; 4096];
+    use alloc::vec;
+    let mut region = vec![0u8; 4096];
     let basic = unsafe { Msr::new(IA32_VMX_BASIC_MSR).read() };
     let revision_id = basic as u32;
     

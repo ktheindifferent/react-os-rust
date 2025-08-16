@@ -1,8 +1,12 @@
 #![allow(dead_code)]
 
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 use x86_64::registers::control::{Cr0, Cr0Flags, Cr4, Cr4Flags};
 use x86_64::registers::model_specific::Msr;
+use crate::serial_println;
 
 pub mod vmx;
 pub mod svm;

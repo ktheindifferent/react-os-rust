@@ -1,6 +1,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, AtomicBool, Ordering};
+use core::arch::asm;
 use x86_64::structures::idt::InterruptStackFrame;
 
 use super::{HypervisorError, VirtualizationTechnology};

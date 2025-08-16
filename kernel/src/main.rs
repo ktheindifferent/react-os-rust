@@ -42,6 +42,8 @@ mod perf;
 mod numa;
 mod power;
 mod thermal;
+mod hypervisor;
+mod container;
 
 #[cfg(test)]
 mod tests;
