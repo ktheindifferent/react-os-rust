@@ -28,6 +28,7 @@ pub struct PciDevice {
     pub subclass: u8,
     pub prog_if: u8,
     pub header_type: u8,
+    pub driver: Option<alloc::string::String>,
 }
 
 impl PciSegment {
@@ -134,6 +135,7 @@ impl PciSegment {
                     subclass: ((class_info >> 16) & 0xFF) as u8,
                     prog_if: ((class_info >> 8) & 0xFF) as u8,
                     header_type: header_type & 0x7F,
+                    driver: None,
                 });
                 
                 // Check if multi-function device
@@ -159,6 +161,7 @@ impl PciSegment {
                             subclass: ((class_info >> 16) & 0xFF) as u8,
                             prog_if: ((class_info >> 8) & 0xFF) as u8,
                             header_type: header_type & 0x7F,
+                            driver: None,
                         });
                     }
                 }
@@ -314,4 +317,21 @@ pub fn find_devices_by_class(class_code: u8, subclass: u8) -> Vec<PciDevice> {
     }
     
     matching
+}
+
+// Helper functions for monitoring/diagnostics module
+pub fn enumerate_devices() -> Option<Vec<PciDevice>> {
+    let segments = PCI_SEGMENTS.lock();
+    
+    if segments.is_empty() {
+        return None;
+    }
+    
+    let mut all_devices = Vec::new();
+    for segment in segments.iter() {
+        let devices = segment.enumerate_devices();
+        all_devices.extend(devices);
+    }
+    
+    Some(all_devices)
 }

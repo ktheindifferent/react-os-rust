@@ -42,3 +42,9 @@ pub trait FileSystem {
     fn delete(&mut self, path: &str) -> Result<(), FileSystemError>;
     fn get_file_info(&self, path: &str) -> Result<FileInfo, FileSystemError>;
 }
+
+// Helper function for monitoring module
+pub fn get_disk_usage() -> u64 {
+    // Placeholder - would calculate actual disk usage
+    1024 * 1024 * 100 // 100MB
+}

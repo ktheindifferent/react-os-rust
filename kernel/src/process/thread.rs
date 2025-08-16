@@ -19,6 +19,8 @@ pub struct Thread {
     pub stack_pointer: u64,
     pub instruction_pointer: u64,
     pub priority: u8,
+    pub cpu_affinity: u64,
+    pub current_cpu: Option<u32>,
 }
 
 impl Thread {
@@ -30,6 +32,8 @@ impl Thread {
             stack_pointer: 0,
             instruction_pointer: 0,
             priority: 0,
+            cpu_affinity: !0u64,
+            current_cpu: None,
         }
     }
 }
