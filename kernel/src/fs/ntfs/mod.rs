@@ -4,6 +4,9 @@ pub mod mft;
 pub mod attributes;
 pub mod index;
 pub mod security;
+pub mod journal;
+pub mod write_ops;
+pub mod advanced;
 
 use alloc::vec::Vec;
 use alloc::string::String;
@@ -12,6 +15,7 @@ use alloc::boxed::Box;
 use alloc::vec;
 use spin::Mutex;
 use crate::drivers::disk::DiskDriver;
+use self::journal::JournalManager;
 
 // NTFS Constants
 pub const NTFS_SIGNATURE: &[u8; 8] = b"NTFS    ";
@@ -60,6 +64,77 @@ pub struct NtfsFileSystem {
     cluster_size: u32,
     mft_start_lcn: u64,
     volume_info: VolumeInfo,
+    journal: Option<Box<JournalManager>>,
+    cluster_bitmap: Mutex<ClusterBitmap>,
+}
+
+// Cluster allocation bitmap
+pub struct ClusterBitmap {
+    data: Vec<u8>,
+    total_clusters: u64,
+    free_clusters: u64,
+}
+
+impl ClusterBitmap {
+    pub fn new(total_clusters: u64) -> Self {
+        let bytes_needed = (total_clusters + 7) / 8;
+        Self {
+            data: vec![0u8; bytes_needed as usize],
+            total_clusters,
+            free_clusters: total_clusters,
+        }
+    }
+    
+    pub fn allocate_clusters(&mut self, count: u64) -> Option<Vec<u64>> {
+        if count > self.free_clusters {
+            return None;
+        }
+        
+        let mut allocated = Vec::new();
+        let mut current = 0u64;
+        
+        while allocated.len() < count as usize && current < self.total_clusters {
+            let byte_idx = (current / 8) as usize;
+            let bit_idx = (current % 8) as u8;
+            
+            if byte_idx < self.data.len() {
+                if (self.data[byte_idx] & (1 << bit_idx)) == 0 {
+                    // Cluster is free, allocate it
+                    self.data[byte_idx] |= 1 << bit_idx;
+                    allocated.push(current);
+                    self.free_clusters -= 1;
+                }
+            }
+            current += 1;
+        }
+        
+        if allocated.len() == count as usize {
+            Some(allocated)
+        } else {
+            // Rollback if we couldn't allocate enough
+            for cluster in &allocated {
+                let byte_idx = (cluster / 8) as usize;
+                let bit_idx = (cluster % 8) as u8;
+                self.data[byte_idx] &= !(1 << bit_idx);
+                self.free_clusters += 1;
+            }
+            None
+        }
+    }
+    
+    pub fn deallocate_clusters(&mut self, clusters: &[u64]) {
+        for cluster in clusters {
+            let byte_idx = (cluster / 8) as usize;
+            let bit_idx = (cluster % 8) as u8;
+            
+            if byte_idx < self.data.len() {
+                if (self.data[byte_idx] & (1 << bit_idx)) != 0 {
+                    self.data[byte_idx] &= !(1 << bit_idx);
+                    self.free_clusters += 1;
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +173,13 @@ impl NtfsFileSystem {
         // Get volume information
         let volume_info = Self::read_volume_info(&mut *disk, &mft)?;
         
+        // Initialize cluster bitmap
+        let total_clusters = boot_sector.total_sectors / boot_sector.sectors_per_cluster as u64;
+        let cluster_bitmap = Mutex::new(ClusterBitmap::new(total_clusters));
+        
+        // Journal initialization would go here
+        let journal = None;
+        
         Ok(Self {
             disk,
             boot_sector,
@@ -105,6 +187,8 @@ impl NtfsFileSystem {
             cluster_size,
             mft_start_lcn,
             volume_info,
+            journal,
+            cluster_bitmap,
         })
     }
     
@@ -346,12 +430,13 @@ impl FileSystem for NtfsFileSystem {
     }
     
     fn write_file(&mut self, path: &str, data: &[u8]) -> Result<(), FileSystemError> {
-        // NTFS write support not implemented yet
-        Err(FileSystemError::NotSupported)
+        self.write_file_impl(path, data)
+            .map_err(|e| FileSystemError::IoError(String::from(e)))
     }
     
     fn create_directory(&mut self, path: &str) -> Result<(), FileSystemError> {
-        Err(FileSystemError::NotSupported)
+        self.create_directory_impl(path)
+            .map_err(|e| FileSystemError::IoError(String::from(e)))
     }
     
     fn list_directory(&self, path: &str) -> Result<Vec<VfsFileInfo>, FileSystemError> {
@@ -361,7 +446,8 @@ impl FileSystem for NtfsFileSystem {
     }
     
     fn delete(&mut self, path: &str) -> Result<(), FileSystemError> {
-        Err(FileSystemError::NotSupported)
+        self.delete_file_impl(path)
+            .map_err(|e| FileSystemError::IoError(String::from(e)))
     }
     
     fn get_file_info(&self, path: &str) -> Result<VfsFileInfo, FileSystemError> {
