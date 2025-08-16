@@ -5,6 +5,8 @@ pub mod sound_tests;
 pub mod nvme_tests;
 pub mod pcie_tests;
 pub mod integration_tests;
+pub mod tcp_tests;
+pub mod tcp_stress_tests;
 pub mod allocator_bench;
 
 use crate::{serial_print, serial_println};
