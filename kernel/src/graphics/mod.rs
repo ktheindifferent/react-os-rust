@@ -19,8 +19,25 @@ pub use window::{Window, WindowId};
 pub fn init() -> Result<(), &'static str> {
     crate::serial_println!("Initializing graphics subsystem...");
     
-    // Initialize VESA driver
-    vesa::init()?;
+    // Try to initialize GPU drivers first
+    if let Ok(()) = crate::gpu::init() {
+        crate::serial_println!("GPU acceleration enabled");
+        
+        // Check if we have a primary GPU
+        let gpu_manager = crate::gpu::GPU_MANAGER.read();
+        if gpu_manager.get_primary_gpu().is_some() {
+            crate::serial_println!("Using hardware-accelerated graphics");
+            // GPU will handle display output
+        } else {
+            // Fall back to VESA if no GPU found
+            crate::serial_println!("No GPU found, falling back to VESA");
+            vesa::init()?;
+        }
+    } else {
+        // Initialize VESA driver as fallback
+        crate::serial_println!("GPU init failed, using VESA framebuffer");
+        vesa::init()?;
+    }
     
     // Initialize font system
     font::init();

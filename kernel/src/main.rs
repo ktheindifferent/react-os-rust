@@ -25,6 +25,7 @@ mod shell;
 mod cmd_shell;
 mod fs;
 mod graphics;
+mod gpu;
 mod net;
 mod acpi;
 mod usb;
