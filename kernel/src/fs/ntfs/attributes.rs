@@ -1,6 +1,8 @@
 // NTFS Attributes Implementation
 use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::collections::BTreeMap;
+use spin::Mutex;
 
 // Standard NTFS Attribute Types
 pub const ATTR_TYPE_STANDARD_INFO: u32 = 0x10;
@@ -309,4 +311,226 @@ fn parse_utf16_name(data: &[u8]) -> String {
     }
     
     name
+}
+
+// Write Support Functions
+
+pub fn create_standard_info_attribute(created: u64, modified: u64, accessed: u64, file_attrs: u32) -> Attribute {
+    let mut data = vec![0u8; 72];
+    
+    // Creation time
+    data[0..8].copy_from_slice(&created.to_le_bytes());
+    // Modification time
+    data[8..16].copy_from_slice(&modified.to_le_bytes());
+    // MFT change time
+    data[16..24].copy_from_slice(&modified.to_le_bytes());
+    // Access time
+    data[24..32].copy_from_slice(&accessed.to_le_bytes());
+    // File attributes
+    data[32..36].copy_from_slice(&file_attrs.to_le_bytes());
+    // Maximum versions (0 = disabled)
+    data[36..40].copy_from_slice(&0u32.to_le_bytes());
+    // Version number
+    data[40..44].copy_from_slice(&0u32.to_le_bytes());
+    // Class ID
+    data[44..48].copy_from_slice(&0u32.to_le_bytes());
+    // Owner ID
+    data[48..52].copy_from_slice(&0u32.to_le_bytes());
+    // Security ID
+    data[52..56].copy_from_slice(&0u32.to_le_bytes());
+    // Quota charged
+    data[56..64].copy_from_slice(&0u64.to_le_bytes());
+    // USN
+    data[64..72].copy_from_slice(&0u64.to_le_bytes());
+    
+    Attribute {
+        type_code: ATTR_TYPE_STANDARD_INFO,
+        name: String::new(),
+        flags: 0,
+        content: AttributeContent::Resident(data),
+    }
+}
+
+pub fn create_file_name_attribute(parent_ref: u64, name: &str, is_directory: bool) -> Attribute {
+    let name_len = name.len();
+    let mut data = vec![0u8; 66 + name_len * 2];
+    
+    // Parent directory reference
+    data[0..8].copy_from_slice(&parent_ref.to_le_bytes());
+    
+    // Get current timestamp (simplified - should use system time)
+    let timestamp = 0x01D7C4F0A0000000u64; // Example Windows timestamp
+    
+    // Creation time
+    data[8..16].copy_from_slice(&timestamp.to_le_bytes());
+    // Modification time
+    data[16..24].copy_from_slice(&timestamp.to_le_bytes());
+    // MFT change time
+    data[24..32].copy_from_slice(&timestamp.to_le_bytes());
+    // Access time
+    data[32..40].copy_from_slice(&timestamp.to_le_bytes());
+    
+    // Allocated size (0 for new file)
+    data[40..48].copy_from_slice(&0u64.to_le_bytes());
+    // Real size (0 for new file)
+    data[48..56].copy_from_slice(&0u64.to_le_bytes());
+    
+    // File attributes
+    let attrs = if is_directory { 0x10000000u32 } else { 0x80u32 };
+    data[56..60].copy_from_slice(&attrs.to_le_bytes());
+    
+    // EA size and reparse tag
+    data[60..64].copy_from_slice(&0u32.to_le_bytes());
+    
+    // File name length in characters
+    data[64] = name_len as u8;
+    
+    // File name type (1 = Windows, 2 = DOS)
+    data[65] = 1;
+    
+    // Write file name as UTF-16
+    for (i, ch) in name.chars().enumerate() {
+        let offset = 66 + i * 2;
+        let utf16 = ch as u16;
+        data[offset..offset + 2].copy_from_slice(&utf16.to_le_bytes());
+    }
+    
+    Attribute {
+        type_code: ATTR_TYPE_FILE_NAME,
+        name: String::new(),
+        flags: 0,
+        content: AttributeContent::Resident(data),
+    }
+}
+
+pub fn create_data_attribute(name: Option<&str>, data: Vec<u8>) -> Attribute {
+    let attr_name = name.map(|s| String::from(s)).unwrap_or_default();
+    
+    // For small data, create resident attribute
+    // For large data, would need to create non-resident
+    if data.len() <= 700 {  // Typical resident data limit
+        Attribute {
+            type_code: ATTR_TYPE_DATA,
+            name: attr_name,
+            flags: 0,
+            content: AttributeContent::Resident(data),
+        }
+    } else {
+        // Create non-resident attribute
+        // This requires allocating clusters and creating data runs
+        create_non_resident_data_attribute(attr_name, data)
+    }
+}
+
+fn create_non_resident_data_attribute(name: String, data: Vec<u8>) -> Attribute {
+    // Calculate clusters needed (assuming 4KB clusters)
+    let cluster_size = 4096;
+    let clusters_needed = (data.len() + cluster_size - 1) / cluster_size;
+    
+    // Create data runs (simplified - would need actual cluster allocation)
+    let mut data_runs = Vec::new();
+    data_runs.push(DataRun {
+        length: clusters_needed as u64,
+        start_lcn: 0, // Would need to allocate actual clusters
+    });
+    
+    let non_res = NonResidentAttribute {
+        start_vcn: 0,
+        last_vcn: clusters_needed as u64 - 1,
+        allocated_size: (clusters_needed * cluster_size) as u64,
+        real_size: data.len() as u64,
+        initialized_size: data.len() as u64,
+        data_runs,
+    };
+    
+    Attribute {
+        type_code: ATTR_TYPE_DATA,
+        name,
+        flags: 0,
+        content: AttributeContent::NonResident(non_res),
+    }
+}
+
+pub fn update_attribute_data(attr: &mut Attribute, new_data: Vec<u8>) -> Result<(), &'static str> {
+    match &mut attr.content {
+        AttributeContent::Resident(ref mut data) => {
+            if new_data.len() <= 700 {
+                *data = new_data;
+                Ok(())
+            } else {
+                // Need to convert to non-resident
+                attr.content = AttributeContent::NonResident(NonResidentAttribute {
+                    start_vcn: 0,
+                    last_vcn: ((new_data.len() + 4095) / 4096) as u64 - 1,
+                    allocated_size: ((new_data.len() + 4095) / 4096 * 4096) as u64,
+                    real_size: new_data.len() as u64,
+                    initialized_size: new_data.len() as u64,
+                    data_runs: vec![DataRun {
+                        length: ((new_data.len() + 4095) / 4096) as u64,
+                        start_lcn: 0, // Would need actual allocation
+                    }],
+                });
+                Ok(())
+            }
+        }
+        AttributeContent::NonResident(ref mut non_res) => {
+            // Update non-resident attribute
+            let new_clusters = ((new_data.len() + 4095) / 4096) as u64;
+            non_res.real_size = new_data.len() as u64;
+            non_res.initialized_size = new_data.len() as u64;
+            
+            if new_clusters > non_res.last_vcn + 1 {
+                // Need to allocate more clusters
+                non_res.last_vcn = new_clusters - 1;
+                non_res.allocated_size = new_clusters * 4096;
+                // Would need to update data runs with new allocations
+            }
+            
+            Ok(())
+        }
+    }
+}
+
+pub fn resize_attribute(attr: &mut Attribute, new_size: u64) -> Result<(), &'static str> {
+    match &mut attr.content {
+        AttributeContent::Resident(ref mut data) => {
+            if new_size <= 700 {
+                data.resize(new_size as usize, 0);
+                Ok(())
+            } else {
+                // Convert to non-resident
+                let clusters = (new_size + 4095) / 4096;
+                attr.content = AttributeContent::NonResident(NonResidentAttribute {
+                    start_vcn: 0,
+                    last_vcn: clusters - 1,
+                    allocated_size: clusters * 4096,
+                    real_size: new_size,
+                    initialized_size: 0,
+                    data_runs: vec![DataRun {
+                        length: clusters,
+                        start_lcn: 0, // Would need actual allocation
+                    }],
+                });
+                Ok(())
+            }
+        }
+        AttributeContent::NonResident(ref mut non_res) => {
+            let new_clusters = (new_size + 4095) / 4096;
+            let old_clusters = non_res.last_vcn + 1;
+            
+            if new_clusters != old_clusters {
+                // Adjust cluster allocation
+                non_res.last_vcn = new_clusters - 1;
+                non_res.allocated_size = new_clusters * 4096;
+                // Would need to update data runs
+            }
+            
+            non_res.real_size = new_size;
+            if new_size < non_res.initialized_size {
+                non_res.initialized_size = new_size;
+            }
+            
+            Ok(())
+        }
+    }
 }

@@ -9,6 +9,9 @@ pub mod memory_tests;
 pub mod scheduler_tests;
 pub mod filesystem_tests;
 pub mod network_tests;
+pub mod tcp_tests;
+pub mod tcp_stress_tests;
+pub mod allocator_bench;
 
 use crate::{serial_print, serial_println};
 
