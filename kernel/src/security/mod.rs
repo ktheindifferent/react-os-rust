@@ -7,6 +7,8 @@ pub mod sandbox;
 pub mod mitigations;
 pub mod audit;
 pub mod integrity;
+pub mod keyring;
+pub mod tpm;
 
 use crate::serial_println;
 
@@ -176,6 +178,17 @@ pub fn init(config: SecurityConfig) {
     integrity::init();
     features |= SecurityFeature::IntegrityChecking as u64;
     serial_println!("[SECURITY] Kernel integrity checking enabled");
+    
+    // Initialize keyring subsystem
+    keyring::init_keyring();
+    serial_println!("[SECURITY] Keyring subsystem initialized");
+    
+    // Initialize TPM if available
+    if let Ok(()) = tpm::init_tpm() {
+        serial_println!("[SECURITY] TPM 2.0 device initialized");
+    } else {
+        serial_println!("[SECURITY] TPM device not available");
+    }
     
     SECURITY_FEATURES.store(features, Ordering::SeqCst);
     SECURITY_INITIALIZED.store(true, Ordering::SeqCst);
