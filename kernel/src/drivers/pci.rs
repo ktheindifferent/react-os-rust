@@ -635,7 +635,23 @@ fn load_pci_device_drivers(pci_bus: &mut PciBus) {
             (0x8086, 0x100f, PciClass::Network) => Some("\\Driver\\E1000"),
             (0x8086, 0x10d3, PciClass::Network) => Some("\\Driver\\E1000e"),
             
-            // VGA/Display controllers
+            // GPU/Display controllers
+            (0x8086, _, PciClass::Display) => {
+                // Intel GPU - initialize GPU driver
+                if let Some(gpu_driver) = crate::gpu::probe_gpu_device(device) {
+                    let mut gpu_manager = crate::gpu::GPU_MANAGER.write();
+                    gpu_manager.register_driver(gpu_driver);
+                }
+                Some("\\Driver\\IntelGPU")
+            }
+            (0x1002, _, PciClass::Display) => {
+                // AMD GPU - initialize GPU driver
+                if let Some(gpu_driver) = crate::gpu::probe_gpu_device(device) {
+                    let mut gpu_manager = crate::gpu::GPU_MANAGER.write();
+                    gpu_manager.register_driver(gpu_driver);
+                }
+                Some("\\Driver\\AMDGPU")
+            }
             (_, _, PciClass::Display) => Some("\\Driver\\VGA"),
             
             // IDE/ATA controllers
