@@ -275,6 +275,14 @@ pub struct Timer {
     apic_frequency: u32,
 }
 
+// Global tick counter for monitoring
+static SYSTEM_TICKS: AtomicU64 = AtomicU64::new(0);
+
+// Helper function for monitoring module
+pub fn get_ticks() -> u64 {
+    SYSTEM_TICKS.load(AtomicOrdering::Relaxed)
+}
+
 impl Timer {
     const fn new() -> Self {
         Self {

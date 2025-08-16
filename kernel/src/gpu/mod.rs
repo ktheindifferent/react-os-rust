@@ -6,7 +6,7 @@ use alloc::sync::Arc;
 use spin::{Mutex, RwLock};
 use x86_64::{PhysAddr, VirtAddr};
 use crate::drivers::pci::{PciDevice, PciClass};
-use crate::memory::PhysicalMemoryManager;
+use crate::memory::frame_allocator::FrameAllocator;
 use lazy_static::lazy_static;
 
 pub mod intel;
