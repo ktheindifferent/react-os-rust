@@ -10,6 +10,7 @@ pub mod input;
 pub mod power;
 pub mod disk;
 pub mod mouse;
+pub mod bluetooth;
 
 use alloc::string::String;
 use alloc::vec::Vec;

@@ -39,6 +39,7 @@ mod security;
 mod arch;
 mod perf;
 mod numa;
+mod bluetooth;
 
 #[cfg(test)]
 mod tests;
@@ -581,6 +582,12 @@ fn init_shell() {
 fn init_drivers() {
     serial_println!("Drivers: Starting device drivers initialization");
     serial_println!("Drivers: Basic driver framework initialized");
+    
+    // Initialize Bluetooth subsystem
+    serial_println!("Drivers: Initializing Bluetooth subsystem");
+    bluetooth::init();
+    serial_println!("Drivers: Bluetooth subsystem initialized");
+    
     serial_println!("Drivers: Device drivers subsystem ready");
 }
 
