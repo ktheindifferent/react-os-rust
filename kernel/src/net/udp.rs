@@ -154,20 +154,6 @@ impl UdpSocket {
         self.remote_addr = Some((addr, port));
     }
     
-    pub fn send_to(&self, data: Vec<u8>, addr: Ipv4Address, port: u16) -> Result<(), &'static str> {
-        let udp_packet = UdpPacket::new(self.local_port, port, data);
-        let our_ip = Ipv4Address::new(192, 168, 1, 100);
-        
-        let ip_packet = IpPacket::new(
-            our_ip,
-            addr,
-            IP_PROTO_UDP,
-            udp_packet.to_bytes(),
-        );
-        
-        super::ip::send_ip_packet(ip_packet)?;
-        Ok(())
-    }
     
     pub fn send(&self, data: Vec<u8>) -> Result<(), &'static str> {
         if let Some((addr, port)) = self.remote_addr {
@@ -179,6 +165,29 @@ impl UdpSocket {
     
     pub fn recv(&mut self) -> Option<(Ipv4Address, u16, Vec<u8>)> {
         self.receive_buffer.pop_front()
+    }
+    
+    pub fn recv_from(&mut self) -> Result<(Vec<u8>, super::socket::SocketAddr), &'static str> {
+        if let Some((addr, port, data)) = self.receive_buffer.pop_front() {
+            Ok((data, super::socket::SocketAddr::new(addr, port)))
+        } else {
+            Err("No data available")
+        }
+    }
+    
+    pub fn send_to(&self, data: &[u8], addr: Ipv4Address, port: u16) -> Result<(), &'static str> {
+        let udp_packet = UdpPacket::new(self.local_port, port, data.to_vec());
+        let our_ip = Ipv4Address::new(192, 168, 1, 100);
+        
+        let ip_packet = IpPacket::new(
+            our_ip,
+            addr,
+            IP_PROTO_UDP,
+            udp_packet.to_bytes(),
+        );
+        
+        super::ip::send_ip_packet(ip_packet)?;
+        Ok(())
     }
 }
 
