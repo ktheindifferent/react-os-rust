@@ -40,6 +40,7 @@ mod security;
 mod arch;
 mod perf;
 mod numa;
+mod multimedia;
 mod crypto;
 mod bluetooth;
 mod power;
@@ -160,6 +161,12 @@ pub extern "C" fn _start() -> ! {
     serial_println!("Stage 5n: Initializing monitoring");
     monitoring::init();
     serial_println!("Stage 5o: Monitoring initialized");
+    
+    // Initialize multimedia system
+    println!("Initializing multimedia framework...");
+    serial_println!("Stage 5p: Initializing multimedia");
+    multimedia::init();
+    serial_println!("Stage 5q: Multimedia initialized");
     
     // Initialize keyboard before enabling interrupts
     println!("Initializing keyboard...");
