@@ -4,6 +4,13 @@ use alloc::vec::Vec;
 use alloc::string::String;
 use crate::{println, serial_println};
 
+// USB Device Info for diagnostics
+pub struct UsbDeviceInfo {
+    pub vendor_id: u16,
+    pub product_id: u16,
+    pub driver: Option<String>,
+}
+
 // USB Device States
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DeviceState {
