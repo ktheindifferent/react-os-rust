@@ -190,13 +190,6 @@ fn init_filesystem() {
     use fs::vfs::VFS;
     use alloc::boxed::Box;
     
-    serial_println!("Skipping FAT32 filesystem mount (no disks available)");
-    
-    // Since disk detection is disabled, skip FAT32 mounting
-    // This prevents hangs when trying to read from non-existent disks
-    
-    // TODO: Re-enable when disk detection is fixed
-    /*
     serial_println!("Attempting to mount FAT32 filesystem...");
     
     // Create filesystem outside of VFS lock to avoid nested locking
@@ -217,9 +210,6 @@ fn init_filesystem() {
             // Could mount a RAM disk here
         }
     }
-    */
-    
-    serial_println!("Using memory-only filesystem for now");
 }
 
 pub fn hlt_loop() -> ! {
