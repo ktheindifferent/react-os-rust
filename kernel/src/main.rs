@@ -39,6 +39,7 @@ mod security;
 mod arch;
 mod perf;
 mod numa;
+mod multimedia;
 
 #[cfg(test)]
 mod tests;
@@ -109,6 +110,11 @@ pub extern "C" fn _start() -> ! {
     println!("Initializing fast syscall (SYSCALL/SYSRET)...");
     serial_println!("Stage 5i: Initializing fast syscall");
     arch::x86_64::fast_syscall::init();
+    
+    // Initialize multimedia system
+    println!("Initializing multimedia framework...");
+    serial_println!("Stage 5j: Initializing multimedia");
+    multimedia::init();
     
     // Initialize keyboard before enabling interrupts
     println!("Initializing keyboard...");
