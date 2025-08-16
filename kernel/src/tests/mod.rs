@@ -5,6 +5,10 @@ pub mod sound_tests;
 pub mod nvme_tests;
 pub mod pcie_tests;
 pub mod integration_tests;
+pub mod memory_tests;
+pub mod scheduler_tests;
+pub mod filesystem_tests;
+pub mod network_tests;
 
 use crate::{serial_print, serial_println};
 
