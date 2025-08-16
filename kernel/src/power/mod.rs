@@ -6,6 +6,9 @@ pub mod battery;
 pub mod profile;
 pub mod governor;
 
+#[cfg(test)]
+mod test;
+
 use alloc::string::String;
 use alloc::vec::Vec;
 use spin::Mutex;

@@ -1,9 +1,9 @@
 use super::governor::CpuGovernor;
 use alloc::vec::Vec;
-use core::arch::x86_64;
 use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::serial_println;
+use x86_64::registers::model_specific::Msr;
 
 const MSR_IA32_PERF_STATUS: u32 = 0x198;
 const MSR_IA32_PERF_CTL: u32 = 0x199;
@@ -102,34 +102,36 @@ impl CpuFrequencyScaling {
     }
 
     fn detect_cpu_features(&mut self) -> Result<(), &'static str> {
-        // Check for thermal and power management features
-        let cpuid = unsafe { x86_64::__cpuid(CPUID_THERMAL_POWER) };
+        // Check for thermal and power management features using raw_cpuid
+        use raw_cpuid::CpuId;
+        let cpuid = CpuId::new();
         
-        if cpuid.eax & (1 << 0) != 0 {
-            serial_println!("CPUFreq: Digital temperature sensor supported");
+        // Check thermal and power features
+        if let Some(features) = cpuid.get_thermal_power_info() {
+            if features.has_dts() {
+                serial_println!("CPUFreq: Digital temperature sensor supported");
+            }
+            
+            if features.has_turbo_boost() {
+                self.turbo_enabled = true;
+                serial_println!("CPUFreq: Intel Turbo Boost / AMD Turbo Core supported");
+            }
+            
+            if features.has_energy_bias_pref() {
+                self.energy_perf_bias = self.read_energy_perf_bias();
+                serial_println!("CPUFreq: Energy performance bias supported");
+            }
         }
         
-        if cpuid.eax & (1 << 1) != 0 {
-            self.turbo_enabled = true;
-            serial_println!("CPUFreq: Intel Turbo Boost / AMD Turbo Core supported");
-        }
-        
-        if cpuid.eax & (1 << 7) != 0 {
-            serial_println!("CPUFreq: Hardware coordination feedback capability");
-        }
-        
-        if cpuid.ecx & (1 << 3) != 0 {
-            self.energy_perf_bias = self.read_energy_perf_bias();
-            serial_println!("CPUFreq: Energy performance bias supported");
-        }
-        
-        // Get frequency information if available
-        let freq_info = unsafe { x86_64::__cpuid(CPUID_FREQ_INFO) };
-        if freq_info.eax != 0 {
-            self.base_frequency = freq_info.eax as u32;
-            self.max_frequency = freq_info.ebx as u32;
-            serial_println!("CPUFreq: Base frequency: {} MHz, Max frequency: {} MHz",
-                           self.base_frequency, self.max_frequency);
+        // Get processor frequency information
+        if let Some(freq_info) = cpuid.get_processor_frequency_info() {
+            self.base_frequency = freq_info.processor_base_frequency() as u32;
+            self.max_frequency = freq_info.processor_max_frequency() as u32;
+            
+            if self.base_frequency > 0 {
+                serial_println!("CPUFreq: Base frequency: {} MHz, Max frequency: {} MHz",
+                               self.base_frequency, self.max_frequency);
+            }
         }
         
         // Check for Intel SpeedStep or AMD Cool'n'Quiet
@@ -315,12 +317,12 @@ impl CpuFrequencyScaling {
             },
             CStateType::C1 => {
                 // Halt instruction
-                unsafe { x86_64::instructions::hlt(); }
+                x86_64::instructions::hlt();
             },
             CStateType::C1E => {
                 // Enhanced halt with frequency reduction
                 self.set_pstate(0)?;
-                unsafe { x86_64::instructions::hlt(); }
+                x86_64::instructions::hlt();
             },
             CStateType::C3 | CStateType::C6 => {
                 // Deep sleep states require MWAIT instruction
@@ -391,13 +393,13 @@ impl CpuFrequencyScaling {
 
     fn read_msr(&self, msr: u32) -> Result<u64, &'static str> {
         unsafe {
-            Ok(x86_64::registers::model_specific::Msr::new(msr).read())
+            Ok(Msr::new(msr).read())
         }
     }
 
     fn write_msr(&self, msr: u32, value: u64) -> Result<(), &'static str> {
         unsafe {
-            x86_64::registers::model_specific::Msr::new(msr).write(value);
+            Msr::new(msr).write(value);
         }
         Ok(())
     }

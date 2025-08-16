@@ -39,6 +39,8 @@ mod security;
 mod arch;
 mod perf;
 mod numa;
+mod power;
+mod thermal;
 
 #[cfg(test)]
 mod tests;
@@ -105,9 +107,27 @@ pub extern "C" fn _start() -> ! {
     serial_println!("Stage 5h: Initializing NUMA");
     numa::init();
     
+    // Initialize advanced power management
+    println!("Initializing advanced power management...");
+    serial_println!("Stage 5i: Initializing power management");
+    if let Err(e) = power::init() {
+        serial_println!("Warning: Power management init failed: {}", e);
+    } else {
+        serial_println!("Stage 5i: Power management initialized successfully");
+    }
+    
+    // Initialize thermal management
+    println!("Initializing thermal management...");
+    serial_println!("Stage 5j: Initializing thermal zones");
+    if let Err(e) = thermal::init() {
+        serial_println!("Warning: Thermal management init failed: {}", e);
+    } else {
+        serial_println!("Stage 5j: Thermal management initialized successfully");
+    }
+    
     // Initialize fast syscall mechanism
     println!("Initializing fast syscall (SYSCALL/SYSRET)...");
-    serial_println!("Stage 5i: Initializing fast syscall");
+    serial_println!("Stage 5k: Initializing fast syscall");
     arch::x86_64::fast_syscall::init();
     
     // Initialize keyboard before enabling interrupts
