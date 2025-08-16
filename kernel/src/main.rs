@@ -39,6 +39,10 @@ mod security;
 mod arch;
 mod perf;
 mod numa;
+mod printing;
+mod scanning;
+mod task;
+mod time;
 
 #[cfg(test)]
 mod tests;
@@ -182,6 +186,22 @@ pub extern "C" fn _start() -> ! {
     serial_println!("Stage 13: Initializing file system with improved mutex handling");
     init_filesystem();
     serial_println!("Stage 13a: File system initialized successfully");
+    
+    // Initialize printing subsystem
+    serial_println!("Stage 13b: Initializing printing subsystem");
+    if let Err(e) = printing::init() {
+        serial_println!("Warning: Failed to initialize printing subsystem: {}", e);
+    } else {
+        serial_println!("Stage 13c: Printing subsystem initialized successfully");
+    }
+    
+    // Initialize scanning subsystem
+    serial_println!("Stage 13d: Initializing scanning subsystem");
+    if let Err(e) = scanning::init() {
+        serial_println!("Warning: Failed to initialize scanning subsystem: {}", e);
+    } else {
+        serial_println!("Stage 13e: Scanning subsystem initialized successfully");
+    }
     
     serial_println!("Stage 14: System ready for shell");
     

@@ -7,6 +7,31 @@ use alloc::vec::Vec;
 use alloc::string::String;
 
 #[derive(Debug, Clone)]
+pub struct File {
+    pub name: String,
+    pub path: String,
+    pub data: Vec<u8>,
+}
+
+impl File {
+    pub fn new(name: String, path: String) -> Self {
+        Self {
+            name,
+            path,
+            data: Vec::new(),
+        }
+    }
+    
+    pub fn size(&self) -> u64 {
+        self.data.len() as u64
+    }
+    
+    pub fn read_all(&self) -> Result<Vec<u8>, FileSystemError> {
+        Ok(self.data.clone())
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum FileType {
     Regular,
     Directory,
