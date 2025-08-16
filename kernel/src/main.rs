@@ -34,6 +34,9 @@ mod nvme;
 mod pcie;
 mod syscall;
 mod timer;
+mod arch;
+mod perf;
+mod numa;
 
 #[cfg(test)]
 mod tests;
@@ -82,6 +85,21 @@ pub extern "C" fn _start() -> ! {
     cpu::init();
     cpu::get_info().print_info();
     serial_println!("Stage 5d: CPU detected");
+    
+    // Initialize performance monitoring
+    println!("Initializing performance monitoring...");
+    serial_println!("Stage 5e: Initializing PMU");
+    perf::PMU_INSTANCE.lock().init();
+    
+    // Initialize NUMA subsystem
+    println!("Initializing NUMA subsystem...");
+    serial_println!("Stage 5f: Initializing NUMA");
+    numa::init();
+    
+    // Initialize fast syscall mechanism
+    println!("Initializing fast syscall (SYSCALL/SYSRET)...");
+    serial_println!("Stage 5g: Initializing fast syscall");
+    arch::x86_64::fast_syscall::init();
     
     // Initialize keyboard before enabling interrupts
     println!("Initializing keyboard...");
