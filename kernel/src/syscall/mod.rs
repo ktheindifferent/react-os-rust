@@ -58,26 +58,9 @@ impl SyscallContext {
 }
 
 pub fn init() {
-    use x86_64::registers::model_specific::{Efer, EferFlags, LStar, Star};
-    use x86_64::registers::rflags::RFlags;
-    
-    unsafe {
-        Efer::update(|flags| {
-            *flags |= EferFlags::SYSTEM_CALL_EXTENSIONS;
-        });
-        
-        // Set up GDT segments for syscall/sysret
-        // The x86_64 crate may have changed - let's use a different approach
-        // Star::write sets up the segment selectors for syscall/sysret
-        
-        LStar::write(VirtAddr::new(syscall_handler as usize as u64));
-        
-        x86_64::registers::model_specific::SFMask::write(
-            RFlags::INTERRUPT_FLAG | RFlags::DIRECTION_FLAG
-        );
-    }
-    
-    crate::serial_println!("Syscall interface initialized");
+    // Now handled by arch::x86_64::fast_syscall::init()
+    // This function is kept for compatibility
+    crate::serial_println!("Legacy syscall interface redirected to fast syscall");
 }
 
 extern "C" fn syscall_handler() {
@@ -123,12 +106,18 @@ pub extern "C" fn handle_syscall(
     arg5: usize,
     arg6: usize,
 ) -> isize {
+    // Track syscall performance
+    let probe = crate::perf::SyscallProbe::start(number);
+    
     let context = SyscallContext::from_registers(number, arg1, arg2, arg3, arg4, arg5, arg6);
     
-    match dispatch_syscall(context) {
+    let result = match dispatch_syscall(context) {
         Ok(result) => result as isize,
         Err(errno) => -(errno as isize),
-    }
+    };
+    
+    probe.end();
+    result
 }
 
 fn dispatch_syscall(context: SyscallContext) -> Result<usize, usize> {

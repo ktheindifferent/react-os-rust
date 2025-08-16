@@ -4,6 +4,108 @@ use pic8259::ChainedPics;
 use spin::{self, Mutex};
 use crate::{println, serial_println};
 use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
+use core::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+use alloc::collections::VecDeque;
+use bitflags::bitflags;
+
+// APIC (Advanced Programmable Interrupt Controller) support
+const APIC_BASE_MSR: u32 = 0x1B;
+const APIC_BASE_ADDR: u64 = 0xFEE00000;
+
+// APIC registers offsets
+const APIC_ID: u32 = 0x20;
+const APIC_VERSION: u32 = 0x30;
+const APIC_TPR: u32 = 0x80;      // Task Priority Register
+const APIC_EOI: u32 = 0xB0;      // End of Interrupt
+const APIC_SPURIOUS: u32 = 0xF0;
+const APIC_ICR_LOW: u32 = 0x300; // Interrupt Command Register
+const APIC_ICR_HIGH: u32 = 0x310;
+const APIC_LVT_TIMER: u32 = 0x320;
+const APIC_LVT_LINT0: u32 = 0x350;
+const APIC_LVT_LINT1: u32 = 0x360;
+const APIC_LVT_ERROR: u32 = 0x370;
+
+// MSI-X support for modern devices
+#[derive(Debug, Clone, Copy)]
+pub struct MsiXEntry {
+    pub vector: u8,
+    pub processor: u8,
+    pub trigger_mode: TriggerMode,
+    pub masked: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum TriggerMode {
+    Edge,
+    Level,
+}
+
+// Interrupt priority levels
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum InterruptPriority {
+    Critical = 15,    // NMI, machine check
+    High = 12,        // Timer, IPI
+    Normal = 8,       // Keyboard, serial
+    Low = 4,          // Network, disk
+    Idle = 0,         // Background tasks
+}
+
+// Interrupt coalescing for high-frequency interrupts
+pub struct InterruptCoalescer {
+    pending_count: AtomicU32,
+    last_service: AtomicU64,
+    threshold: u32,
+    time_window_ns: u64,
+}
+
+impl InterruptCoalescer {
+    pub const fn new(threshold: u32, time_window_ns: u64) -> Self {
+        Self {
+            pending_count: AtomicU32::new(0),
+            last_service: AtomicU64::new(0),
+            threshold,
+            time_window_ns,
+        }
+    }
+    
+    pub fn should_handle(&self) -> bool {
+        let count = self.pending_count.fetch_add(1, Ordering::SeqCst) + 1;
+        let now = crate::timer::rdtsc();
+        let last = self.last_service.load(Ordering::SeqCst);
+        
+        if count >= self.threshold || (now - last) > self.time_window_ns {
+            self.pending_count.store(0, Ordering::SeqCst);
+            self.last_service.store(now, Ordering::SeqCst);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+// Per-interrupt statistics
+#[derive(Default)]
+pub struct InterruptStats {
+    pub count: AtomicU64,
+    pub cycles: AtomicU64,
+    pub max_latency: AtomicU64,
+    pub min_latency: AtomicU64,
+}
+
+// Global interrupt statistics
+static INTERRUPT_STATS: [InterruptStats; 256] = [const { InterruptStats {
+    count: AtomicU64::new(0),
+    cycles: AtomicU64::new(0),
+    max_latency: AtomicU64::new(0),
+    min_latency: AtomicU64::new(u64::MAX),
+}}; 256];
+
+// Network interrupt coalescer
+static NETWORK_COALESCER: InterruptCoalescer = InterruptCoalescer::new(16, 1_000_000); // 16 packets or 1ms
+
+// Disk interrupt coalescer
+static DISK_COALESCER: InterruptCoalescer = InterruptCoalescer::new(8, 500_000); // 8 operations or 500µs
 
 pub mod keyboard;
 
@@ -97,6 +199,66 @@ lazy_static! {
 
 pub fn init_idt() {
     IDT.load();
+    
+    // Enable APIC if available
+    if is_apic_available() {
+        init_apic();
+        serial_println!("APIC initialized with interrupt priorities");
+    }
+}
+
+fn is_apic_available() -> bool {
+    use crate::cpu::get_info;
+    let cpu_info = get_info();
+    cpu_info.features.contains(crate::cpu::CpuFeatures::APIC)
+}
+
+fn init_apic() {
+    unsafe {
+        // Enable APIC in MSR
+        let mut apic_base = crate::cpu::read_msr(APIC_BASE_MSR);
+        apic_base |= 1 << 11; // Enable APIC
+        apic_base |= 1 << 8;  // Bootstrap processor
+        crate::cpu::write_msr(APIC_BASE_MSR, apic_base);
+        
+        let apic_ptr = APIC_BASE_ADDR as *mut u32;
+        
+        // Enable APIC and set spurious interrupt vector
+        let spurious = apic_ptr.add((APIC_SPURIOUS / 4) as usize);
+        spurious.write_volatile(0x1FF); // Enable APIC, spurious vector 0xFF
+        
+        // Set task priority to 0 (accept all interrupts)
+        let tpr = apic_ptr.add((APIC_TPR / 4) as usize);
+        tpr.write_volatile(0);
+        
+        // Configure Local APIC timer
+        let lvt_timer = apic_ptr.add((APIC_LVT_TIMER / 4) as usize);
+        lvt_timer.write_volatile(0x20020); // Periodic mode, vector 32
+    }
+}
+
+pub fn set_interrupt_priority(vector: u8, priority: InterruptPriority) {
+    if !is_apic_available() {
+        return;
+    }
+    
+    unsafe {
+        let apic_ptr = APIC_BASE_ADDR as *mut u32;
+        let tpr = apic_ptr.add((APIC_TPR / 4) as usize);
+        
+        // Set priority in TPR (Task Priority Register)
+        // Higher 4 bits = priority class, lower 4 bits = priority subclass
+        let priority_value = (priority as u32) << 4;
+        tpr.write_volatile(priority_value);
+    }
+}
+
+pub fn send_eoi_apic() {
+    unsafe {
+        let apic_ptr = APIC_BASE_ADDR as *mut u32;
+        let eoi = apic_ptr.add((APIC_EOI / 4) as usize);
+        eoi.write_volatile(0);
+    }
 }
 
 pub fn init_keyboard() {
@@ -187,10 +349,16 @@ pub static TIMER_TICKS: Mutex<u64> = Mutex::new(0);
 extern "x86-interrupt" fn timer_interrupt_handler(
     _stack_frame: InterruptStackFrame)
 {
+    // Track interrupt latency
+    let start_cycles = crate::timer::rdtsc();
     // Send EOI first to prevent interrupt stacking
-    unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+    if is_apic_available() {
+        send_eoi_apic();
+    } else {
+        unsafe {
+            PICS.lock()
+                .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+        }
     }
     
     // Increment timer tick counter
@@ -214,11 +382,21 @@ extern "x86-interrupt" fn timer_interrupt_handler(
         }
         // If we can't get the lock, skip this scheduling tick
     }
+    
+    // Update interrupt statistics
+    let end_cycles = crate::timer::rdtsc();
+    let latency = end_cycles - start_cycles;
+    let stats = &INTERRUPT_STATS[InterruptIndex::Timer.as_usize()];
+    stats.count.fetch_add(1, Ordering::Relaxed);
+    stats.cycles.fetch_add(latency, Ordering::Relaxed);
+    stats.max_latency.fetch_max(latency, Ordering::Relaxed);
+    stats.min_latency.fetch_min(latency, Ordering::Relaxed);
 }
 
 extern "x86-interrupt" fn keyboard_interrupt_handler(
     _stack_frame: InterruptStackFrame)
 {
+    let start_cycles = crate::timer::rdtsc();
     use x86_64::instructions::port::Port;
     use pc_keyboard::{KeyCode, KeyState};
     
@@ -227,9 +405,13 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
     let scancode: u8 = unsafe { port.read() };
     
     // Send EOI early to prevent interrupt stacking
-    unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+    if is_apic_available() {
+        send_eoi_apic();
+    } else {
+        unsafe {
+            PICS.lock()
+                .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+        }
     }
     
     // Process keyboard input if keyboard is initialized
@@ -350,6 +532,13 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
             }
         }
     }
+    // Update interrupt statistics
+    let end_cycles = crate::timer::rdtsc();
+    let latency = end_cycles - start_cycles;
+    let stats = &INTERRUPT_STATS[InterruptIndex::Keyboard.as_usize()];
+    stats.count.fetch_add(1, Ordering::Relaxed);
+    stats.cycles.fetch_add(latency, Ordering::Relaxed);
+    
     // EOI already sent at the beginning of the handler
 }
 
@@ -407,4 +596,126 @@ extern "x86-interrupt" fn page_fault_handler(
         hlt_loop();
     }
     // Page fault handled successfully, return to continue execution
+}
+
+// Fast interrupt entry point using SYSCALL/SYSRET-like optimization
+#[naked]
+pub unsafe extern "C" fn fast_interrupt_entry() {
+    core::arch::asm!(
+        // Save minimal context (only what we need)
+        "push rax",
+        "push rcx",
+        "push rdx",
+        "push rsi",
+        "push rdi",
+        "push r8",
+        "push r9",
+        "push r10",
+        "push r11",
+        
+        // Call interrupt handler
+        "call fast_interrupt_handler",
+        
+        // Restore context
+        "pop r11",
+        "pop r10",
+        "pop r9",
+        "pop r8",
+        "pop rdi",
+        "pop rsi",
+        "pop rdx",
+        "pop rcx",
+        "pop rax",
+        
+        "iretq",
+        options(noreturn)
+    );
+}
+
+extern "C" fn fast_interrupt_handler() {
+    // Fast path for common interrupts
+    // This would be called for high-frequency interrupts
+}
+
+// Network interrupt handler with coalescing
+extern "x86-interrupt" fn network_interrupt_handler(
+    _stack_frame: InterruptStackFrame)
+{
+    if !NETWORK_COALESCER.should_handle() {
+        // Skip this interrupt, will be handled in batch
+        if is_apic_available() {
+            send_eoi_apic();
+        } else {
+            unsafe {
+                PICS.lock().notify_end_of_interrupt(PIC_2_OFFSET + 1);
+            }
+        }
+        return;
+    }
+    
+    // Process batched network packets
+    // TODO: Implement network packet processing
+    
+    if is_apic_available() {
+        send_eoi_apic();
+    } else {
+        unsafe {
+            PICS.lock().notify_end_of_interrupt(PIC_2_OFFSET + 1);
+        }
+    }
+}
+
+// Disk interrupt handler with coalescing
+extern "x86-interrupt" fn disk_interrupt_handler(
+    _stack_frame: InterruptStackFrame)
+{
+    if !DISK_COALESCER.should_handle() {
+        // Skip this interrupt, will be handled in batch
+        if is_apic_available() {
+            send_eoi_apic();
+        } else {
+            unsafe {
+                PICS.lock().notify_end_of_interrupt(InterruptIndex::PrimaryATA.as_u8());
+            }
+        }
+        return;
+    }
+    
+    // Process batched disk operations
+    // TODO: Implement disk operation processing
+    
+    if is_apic_available() {
+        send_eoi_apic();
+    } else {
+        unsafe {
+            PICS.lock().notify_end_of_interrupt(InterruptIndex::PrimaryATA.as_u8());
+        }
+    }
+}
+
+// Get interrupt statistics
+pub fn get_interrupt_stats(vector: u8) -> (u64, u64, u64, u64) {
+    let stats = &INTERRUPT_STATS[vector as usize];
+    (
+        stats.count.load(Ordering::Relaxed),
+        stats.cycles.load(Ordering::Relaxed),
+        stats.max_latency.load(Ordering::Relaxed),
+        stats.min_latency.load(Ordering::Relaxed),
+    )
+}
+
+// Print interrupt statistics
+pub fn print_interrupt_stats() {
+    println!("Interrupt Statistics:");
+    println!("Vector | Count      | Avg Cycles | Max Latency | Min Latency");
+    println!("-------|------------|------------|-------------|------------");
+    
+    for i in 32..48 {
+        let (count, cycles, max, min) = get_interrupt_stats(i);
+        if count > 0 {
+            let avg = cycles / count;
+            println!("{:6} | {:10} | {:10} | {:11} | {:11}", 
+                i, count, avg, max, min);
+        }
+    }
 }
