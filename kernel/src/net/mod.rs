@@ -43,6 +43,17 @@ pub fn init() -> Result<(), &'static str> {
     Ok(())
 }
 
+// Helper functions for monitoring module
+pub fn get_bytes_sent() -> u64 {
+    // Placeholder - would track actual bytes sent
+    1024 * 1024 * 10 // 10MB
+}
+
+pub fn get_bytes_received() -> u64 {
+    // Placeholder - would track actual bytes received
+    1024 * 1024 * 20 // 20MB
+}
+
 // Common network types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
