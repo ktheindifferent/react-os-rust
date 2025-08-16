@@ -2,6 +2,7 @@ pub mod fat32;
 pub mod vfs;
 pub mod file_ops;
 pub mod ntfs;
+pub mod crypto;
 
 use alloc::vec::Vec;
 use alloc::string::String;

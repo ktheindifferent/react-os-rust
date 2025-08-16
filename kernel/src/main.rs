@@ -40,6 +40,7 @@ mod security;
 mod arch;
 mod perf;
 mod numa;
+mod crypto;
 mod bluetooth;
 mod power;
 mod thermal;
@@ -108,6 +109,12 @@ pub extern "C" fn _start() -> ! {
     let security_config = security::SecurityConfig::default();
     security::init(security_config);
     serial_println!("Stage 5f: Security initialized");
+    
+    // Initialize cryptography subsystem
+    println!("Initializing cryptography subsystem...");
+    serial_println!("Stage 5fa: Initializing crypto");
+    crypto::init();
+    serial_println!("Stage 5fb: Crypto initialized");
     
     // Initialize performance monitoring
     println!("Initializing performance monitoring...");
