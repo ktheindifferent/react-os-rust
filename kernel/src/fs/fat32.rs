@@ -96,7 +96,7 @@ impl Fat32FileSystem {
                     Ok(_) => serial_println!("Boot sector read successfully"),
                     Err(e) => {
                         serial_println!("Failed to read boot sector: {:?}", e);
-                        return Err(FileSystemError::IoError);
+                        return Err(FileSystemError::IoError(String::from("IO error")));
                     }
                 }
             } else {
@@ -145,7 +145,7 @@ impl Fat32FileSystem {
         let mut disk_manager = DISK_MANAGER.lock();
         if let Some(disk) = disk_manager.get_disk(self.disk_index) {
             disk.read_sectors(sector as u64, self.sectors_per_cluster, &mut data)
-                .map_err(|_| FileSystemError::IoError)?;
+                .map_err(|_| FileSystemError::IoError(String::from("Read error")))?;
         }
         
         Ok(data)
@@ -163,7 +163,7 @@ impl Fat32FileSystem {
         let mut disk_manager = DISK_MANAGER.lock();
         if let Some(disk) = disk_manager.get_disk(self.disk_index) {
             disk.read_sectors(fat_sector as u64, 1, &mut sector_data)
-                .map_err(|_| FileSystemError::IoError)?;
+                .map_err(|_| FileSystemError::IoError(String::from("Read error")))?;
         }
         
         let next_cluster = u32::from_le_bytes([
@@ -348,7 +348,7 @@ impl FileSystem for Fat32FileSystem {
         // 2. Allocate clusters in FAT
         // 3. Write data to clusters
         // 4. Update directory entry
-        Err(FileSystemError::IoError)  // Not implemented yet
+        Err(FileSystemError::IoError(String::from("Not implemented")))  // Not implemented yet
     }
     
     fn create_directory(&mut self, _path: &str) -> Result<(), FileSystemError> {
@@ -356,7 +356,7 @@ impl FileSystem for Fat32FileSystem {
         // 1. Allocate a cluster
         // 2. Create . and .. entries
         // 3. Add directory entry in parent
-        Err(FileSystemError::IoError)  // Not implemented yet
+        Err(FileSystemError::IoError(String::from("Not implemented")))  // Not implemented yet
     }
     
     fn list_directory(&self, path: &str) -> Result<Vec<FileInfo>, FileSystemError> {
@@ -387,7 +387,7 @@ impl FileSystem for Fat32FileSystem {
         // 1. Find directory entry
         // 2. Mark clusters as free in FAT
         // 3. Mark directory entry as deleted (0xE5)
-        Err(FileSystemError::IoError)  // Not implemented yet
+        Err(FileSystemError::IoError(String::from("Not implemented")))  // Not implemented yet
     }
     
     fn get_file_info(&self, path: &str) -> Result<FileInfo, FileSystemError> {

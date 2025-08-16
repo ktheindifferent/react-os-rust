@@ -42,14 +42,28 @@ pub fn get_device_type(port: &HbaPort) -> DeviceType {
     }
 }
 
-pub fn port_rebase(port: &mut HbaPort, port_no: u32) -> Result<(), &'static str> {
+pub fn port_rebase(port: &mut HbaPort, port_no: u32, clb: u64, fb: u64) -> Result<(), &'static str> {
     serial_println!("AHCI: Rebasing port {}", port_no);
     
     // Stop command engine
     stop_cmd(port)?;
     
-    // TODO: Allocate memory for command list and FIS receive area
-    // For now, this is handled in the main AHCI module
+    // Set command list base address
+    port.clb = clb as u32;
+    port.clbu = (clb >> 32) as u32;
+    
+    // Set FIS receive area base address
+    port.fb = fb as u32;
+    port.fbu = (fb >> 32) as u32;
+    
+    // Clear the memory areas
+    unsafe {
+        use crate::memory::PHYS_MEM_OFFSET;
+        // Clear command list (1K)
+        core::ptr::write_bytes((PHYS_MEM_OFFSET + clb) as *mut u8, 0, 1024);
+        // Clear FIS receive area (256 bytes)
+        core::ptr::write_bytes((PHYS_MEM_OFFSET + fb) as *mut u8, 0, 256);
+    }
     
     // Start command engine
     start_cmd(port)?;

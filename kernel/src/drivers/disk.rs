@@ -69,7 +69,30 @@ pub struct AtaDisk {
 }
 
 impl AtaDisk {
+    pub fn new_with_timeout(base_port: u16, control_port: u16, is_master: bool) -> Self {
+        let mut disk = Self::new_internal(base_port, control_port, is_master);
+        
+        // Try to identify with timeout
+        match disk.identify_with_timeout() {
+            Ok(_) => {
+                crate::serial_println!("Successfully identified {} disk: {}", 
+                                      if disk.is_master { "master" } else { "slave" },
+                                      disk.info.model);
+            }
+            Err(e) => {
+                crate::serial_println!("Failed to identify {} disk: {:?}", 
+                                      if disk.is_master { "master" } else { "slave" }, e);
+            }
+        }
+        
+        disk
+    }
+    
     pub fn new(base_port: u16, control_port: u16, is_master: bool) -> Self {
+        Self::new_internal(base_port, control_port, is_master)
+    }
+    
+    fn new_internal(base_port: u16, control_port: u16, is_master: bool) -> Self {
         let mut disk = Self {
             base_port,
             control_port,
@@ -93,17 +116,106 @@ impl AtaDisk {
             command_port: PortWriteOnly::new(base_port + 7),
         };
         
-        // Try to identify the disk
-        match disk.identify() {
-            Ok(()) => {
-                crate::serial_println!("ATA disk found: {}", disk.info.name);
-            }
-            Err(e) => {
-                crate::serial_println!("Disk {} not found or failed to identify: {:?}", disk.info.name, e);
+        // For the original new() function, still try to identify but without timeout
+        if matches!((base_port, control_port, is_master), (_, _, _)) {
+            // This is called from new(), so do regular identify
+            match disk.identify() {
+                Ok(()) => {
+                    crate::serial_println!("ATA disk found: {}", disk.info.name);
+                }
+                Err(e) => {
+                    crate::serial_println!("Disk {} not found or failed to identify: {:?}", disk.info.name, e);
+                }
             }
         }
         
         disk
+    }
+    
+    fn identify_with_timeout(&mut self) -> Result<(), DiskError> {
+        // Use a timeout counter based on CPU cycles
+        const MAX_TIMEOUT_CYCLES: u64 = 100_000_000; // Approximately 100ms at 1GHz
+        let start_cycles = Self::read_cpu_cycles();
+        
+        unsafe {
+            crate::serial_println!("Identifying {} disk with timeout...", if self.is_master { "master" } else { "slave" });
+            
+            // Select drive
+            self.drive_port.write(if self.is_master { 0xA0 } else { 0xB0 });
+            
+            // Small delay after selecting drive
+            for _ in 0..100 {
+                core::hint::spin_loop();
+            }
+            
+            // Check if drive exists first with timeout
+            let mut initial_status = 0u8;
+            let mut found = false;
+            
+            while Self::read_cpu_cycles() - start_cycles < MAX_TIMEOUT_CYCLES / 10 {
+                initial_status = self.status_port.read();
+                if initial_status != 0 && initial_status != 0xFF {
+                    found = true;
+                    break;
+                }
+                core::hint::spin_loop();
+            }
+            
+            if !found {
+                crate::serial_println!("No drive detected (status 0x{:02X}) - timeout", initial_status);
+                return Err(DiskError::NotFound);
+            }
+            
+            crate::serial_println!("Initial status: 0x{:02X}", initial_status);
+            
+            // Send IDENTIFY command
+            self.command_port.write(ATA_CMD_IDENTIFY);
+            
+            // Wait for response with timeout
+            match self.wait_ready_with_timeout(MAX_TIMEOUT_CYCLES) {
+                Ok(false) | Err(_) => return Err(DiskError::NotFound),
+                Ok(true) => {},
+            }
+            
+            // Check if drive exists
+            let status = self.status_port.read();
+            if status == 0 || status == 0xFF {
+                return Err(DiskError::NotFound);
+            }
+            
+            // Wait for data to be ready with timeout
+            self.wait_drq_with_timeout(MAX_TIMEOUT_CYCLES)?;
+            
+            // Read identification data
+            let mut data = [0u16; 256];
+            for i in 0..256 {
+                data[i] = self.data_port.read();
+            }
+            
+            // Parse identification data
+            // Words 60-61: Total sectors (LBA28)
+            self.info.sectors = ((data[61] as u64) << 16) | (data[60] as u64);
+            
+            // Words 27-46: Model string
+            let mut model = String::new();
+            for i in 27..=46 {
+                let bytes = data[i].to_le_bytes();
+                model.push(bytes[1] as char);
+                model.push(bytes[0] as char);
+            }
+            self.info.model = model.trim().to_string();
+            
+            // Words 10-19: Serial number
+            let mut serial = String::new();
+            for i in 10..=19 {
+                let bytes = data[i].to_le_bytes();
+                serial.push(bytes[1] as char);
+                serial.push(bytes[0] as char);
+            }
+            self.info.serial = serial.trim().to_string();
+        }
+        
+        Ok(())
     }
     
     fn identify(&mut self) -> Result<(), DiskError> {
@@ -177,6 +289,36 @@ impl AtaDisk {
         Ok(())
     }
     
+    fn wait_ready_with_timeout(&mut self, timeout_cycles: u64) -> Result<bool, DiskError> {
+        let start_cycles = Self::read_cpu_cycles();
+        
+        unsafe {
+            while Self::read_cpu_cycles() - start_cycles < timeout_cycles {
+                let status = self.status_port.read();
+                
+                // Check for invalid status (no device)
+                if status == 0xFF || status == 0 {
+                    return Err(DiskError::NotFound);
+                }
+                
+                if status & ATA_STATUS_BSY == 0 {
+                    if status & ATA_STATUS_ERR != 0 {
+                        return Ok(false);
+                    }
+                    return Ok(true);
+                }
+                
+                // Small delay
+                for _ in 0..10 {
+                    core::hint::spin_loop();
+                }
+            }
+        }
+        
+        crate::serial_println!("Timeout waiting for disk ready");
+        Err(DiskError::IoError)
+    }
+    
     fn wait_ready(&mut self) -> Result<bool, DiskError> {
         unsafe {
             // Wait for BSY to clear (very short timeout to prevent hangs)
@@ -201,6 +343,51 @@ impl AtaDisk {
             }
         }
         Err(DiskError::IoError)
+    }
+    
+    fn wait_drq_with_timeout(&mut self, timeout_cycles: u64) -> Result<(), DiskError> {
+        let start_cycles = Self::read_cpu_cycles();
+        
+        unsafe {
+            while Self::read_cpu_cycles() - start_cycles < timeout_cycles {
+                let status = self.status_port.read();
+                
+                // Check for invalid status
+                if status == 0xFF || status == 0 {
+                    return Err(DiskError::NotFound);
+                }
+                
+                if status & ATA_STATUS_DRQ != 0 {
+                    return Ok(());
+                }
+                if status & ATA_STATUS_ERR != 0 {
+                    return Err(DiskError::IoError);
+                }
+                
+                // Small delay
+                for _ in 0..50 {
+                    core::hint::spin_loop();
+                }
+            }
+        }
+        
+        crate::serial_println!("Timeout waiting for data ready");
+        Err(DiskError::IoError)
+    }
+    
+    // Helper function to read CPU timestamp counter
+    fn read_cpu_cycles() -> u64 {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            use core::arch::x86_64::_rdtsc;
+            _rdtsc()
+        }
+        
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            // Fallback for non-x86_64 architectures
+            0
+        }
     }
     
     fn wait_drq(&mut self) -> Result<(), DiskError> {
@@ -343,42 +530,41 @@ impl DiskManager {
     }
     
     pub fn init(&mut self) {
-        crate::serial_println!("Initializing disk drivers...");
+        crate::serial_println!("Initializing disk drivers with timeout detection...");
         
-        // Skip disk detection for now to avoid hangs during boot
-        // This can be enabled later when disk detection is more robust
-        crate::serial_println!("Skipping disk detection to avoid boot hangs");
+        // Try to detect ATA disks with timeout protection
+        self.detect_disks_with_timeout();
         
-        // TODO: Implement timeout-based disk detection
-        // The ATA identify command can hang on some systems/emulators
-        // Need to implement proper timeout handling or async detection
-        
-        /*
-        // Try to detect ATA disks - only check primary master for now
-        // Checking non-existent drives causes timeouts
-        crate::serial_println!("Checking for primary master disk...");
-        let primary_master = AtaDisk::new(ATA_PRIMARY_BASE, ATA_PRIMARY_CTRL, true);
+        crate::serial_println!("Disk driver initialization complete. Found {} disk(s)", self.disks.len());
+    }
+    
+    fn detect_disks_with_timeout(&mut self) {
+        // Check primary master with timeout
+        crate::serial_println!("Checking for primary master disk (with timeout)...");
+        let primary_master = AtaDisk::new_with_timeout(ATA_PRIMARY_BASE, ATA_PRIMARY_CTRL, true);
         if primary_master.info.sectors > 0 {
             crate::serial_println!("Found disk: {} ({} sectors)", 
                                    primary_master.info.model, 
                                    primary_master.info.sectors);
             self.disks.push(Box::new(primary_master));
         } else {
-            crate::serial_println!("No primary master disk found");
+            crate::serial_println!("No primary master disk found or timeout occurred");
         }
-        */
         
-        // Skip checking primary slave to avoid hang
-        // In QEMU, usually only primary master is present
-        // let primary_slave = AtaDisk::new(ATA_PRIMARY_BASE, ATA_PRIMARY_CTRL, false);
-        // if primary_slave.info.sectors > 0 {
-        //     crate::serial_println!("Found disk: {} ({} sectors)", 
-        //                            primary_slave.info.model, 
-        //                            primary_slave.info.sectors);
-        //     self.disks.push(Box::new(primary_slave));
-        // }
+        // Check primary slave with timeout
+        crate::serial_println!("Checking for primary slave disk (with timeout)...");
+        let primary_slave = AtaDisk::new_with_timeout(ATA_PRIMARY_BASE, ATA_PRIMARY_CTRL, false);
+        if primary_slave.info.sectors > 0 {
+            crate::serial_println!("Found disk: {} ({} sectors)", 
+                                   primary_slave.info.model, 
+                                   primary_slave.info.sectors);
+            self.disks.push(Box::new(primary_slave));
+        } else {
+            crate::serial_println!("No primary slave disk found or timeout occurred");
+        }
         
-        crate::serial_println!("Disk driver initialization complete. Found {} disk(s)", self.disks.len());
+        // Could also check secondary controllers if needed
+        // Secondary master: ATA_SECONDARY_BASE (0x170), ATA_SECONDARY_CTRL (0x376)
     }
     
     pub fn get_disk(&mut self, index: usize) -> Option<&mut Box<dyn DiskDriver>> {

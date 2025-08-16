@@ -25,6 +25,7 @@ mod shell;
 mod cmd_shell;
 mod fs;
 mod graphics;
+mod gpu;
 mod net;
 mod acpi;
 mod usb;
@@ -34,6 +35,9 @@ mod nvme;
 mod pcie;
 mod syscall;
 mod timer;
+mod arch;
+mod perf;
+mod numa;
 
 #[cfg(test)]
 mod tests;
@@ -82,6 +86,21 @@ pub extern "C" fn _start() -> ! {
     cpu::init();
     cpu::get_info().print_info();
     serial_println!("Stage 5d: CPU detected");
+    
+    // Initialize performance monitoring
+    println!("Initializing performance monitoring...");
+    serial_println!("Stage 5e: Initializing PMU");
+    perf::PMU_INSTANCE.lock().init();
+    
+    // Initialize NUMA subsystem
+    println!("Initializing NUMA subsystem...");
+    serial_println!("Stage 5f: Initializing NUMA");
+    numa::init();
+    
+    // Initialize fast syscall mechanism
+    println!("Initializing fast syscall (SYSCALL/SYSRET)...");
+    serial_println!("Stage 5g: Initializing fast syscall");
+    arch::x86_64::fast_syscall::init();
     
     // Initialize keyboard before enabling interrupts
     println!("Initializing keyboard...");
@@ -190,13 +209,6 @@ fn init_filesystem() {
     use fs::vfs::VFS;
     use alloc::boxed::Box;
     
-    serial_println!("Skipping FAT32 filesystem mount (no disks available)");
-    
-    // Since disk detection is disabled, skip FAT32 mounting
-    // This prevents hangs when trying to read from non-existent disks
-    
-    // TODO: Re-enable when disk detection is fixed
-    /*
     serial_println!("Attempting to mount FAT32 filesystem...");
     
     // Create filesystem outside of VFS lock to avoid nested locking
@@ -217,9 +229,6 @@ fn init_filesystem() {
             // Could mount a RAM disk here
         }
     }
-    */
-    
-    serial_println!("Using memory-only filesystem for now");
 }
 
 pub fn hlt_loop() -> ! {
