@@ -10,6 +10,7 @@ pub mod dhcp;
 pub mod dns;
 pub mod interface;
 pub mod buffer;
+pub mod wireless;
 
 use alloc::vec::Vec;
 use alloc::string::String;
