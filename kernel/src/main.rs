@@ -44,6 +44,7 @@ mod power;
 mod thermal;
 mod hypervisor;
 mod container;
+mod debug;  // Advanced debugging infrastructure
 
 #[cfg(test)]
 mod tests;
@@ -138,6 +139,12 @@ pub extern "C" fn _start() -> ! {
     println!("Initializing fast syscall (SYSCALL/SYSRET)...");
     serial_println!("Stage 5k: Initializing fast syscall");
     arch::x86_64::fast_syscall::init();
+    
+    // Initialize advanced debugging infrastructure
+    println!("Initializing debugging infrastructure...");
+    serial_println!("Stage 5j: Initializing debug subsystem");
+    debug::init();
+    serial_println!("Stage 5k: Debug subsystem initialized");
     
     // Initialize keyboard before enabling interrupts
     println!("Initializing keyboard...");
@@ -237,6 +244,34 @@ pub extern "C" fn _start() -> ! {
 
 // Keyboard input handler for the shell
 fn handle_keyboard_input(character: char) {
+    // Check for SysRq key combination (Alt+PrintScreen+key)
+    // For now, use Alt+S as SysRq trigger for simplicity
+    static mut SYSRQ_MODE: bool = false;
+    static mut ALT_PRESSED: bool = false;
+    
+    // Simple SysRq detection (would need proper keyboard state tracking)
+    if character == '\x1B' {  // ESC as Alt substitute
+        unsafe { ALT_PRESSED = true; }
+        return;
+    }
+    
+    unsafe {
+        if ALT_PRESSED && character == 's' {
+            SYSRQ_MODE = true;
+            ALT_PRESSED = false;
+            serial_println!("SysRq: Press command key (h for help)");
+            return;
+        }
+        
+        if SYSRQ_MODE {
+            SYSRQ_MODE = false;
+            debug::sysrq::handle_sysrq(character);
+            return;
+        }
+        
+        ALT_PRESSED = false;
+    }
+    
     // Pass input to command shell
     cmd_shell::handle_keyboard_input(character);
 }
@@ -367,40 +402,8 @@ pub fn main_loop() -> ! {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    // Disable interrupts to prevent further issues
-    x86_64::instructions::interrupts::disable();
-    
-    // Print to both VGA and serial for better debugging
-    serial_println!("\n\n=== KERNEL PANIC ===");
-    println!("\n\n=== KERNEL PANIC ===");
-    
-    // Print panic information
-    serial_println!("{}", info);
-    println!("{}", info);
-    
-    // Try to print CPU state
-    serial_println!("\nCPU State at panic:");
-    unsafe {
-        let rsp: u64;
-        let rbp: u64;
-        let rip: u64;
-        core::arch::asm!(
-            "mov {}, rsp",
-            "mov {}, rbp", 
-            "lea {}, [rip]",
-            out(reg) rsp,
-            out(reg) rbp,
-            out(reg) rip,
-        );
-        serial_println!("  RSP: {:#018x}", rsp);
-        serial_println!("  RBP: {:#018x}", rbp);
-        serial_println!("  RIP: {:#018x}", rip);
-    }
-    
-    serial_println!("\nSystem halted.");
-    println!("\nSystem halted.");
-    
-    hlt_loop();
+    // Use enhanced panic handler with debugging features
+    debug::enhanced_panic_handler(info)
 }
 
 #[cfg(test)]
