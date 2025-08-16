@@ -34,6 +34,7 @@ mod nvme;
 mod pcie;
 mod syscall;
 mod timer;
+mod security;
 
 #[cfg(test)]
 mod tests;
@@ -82,6 +83,13 @@ pub extern "C" fn _start() -> ! {
     cpu::init();
     cpu::get_info().print_info();
     serial_println!("Stage 5d: CPU detected");
+    
+    // Initialize security subsystem
+    println!("Initializing security features...");
+    serial_println!("Stage 5e: Initializing security");
+    let security_config = security::SecurityConfig::default();
+    security::init(security_config);
+    serial_println!("Stage 5f: Security initialized");
     
     // Initialize keyboard before enabling interrupts
     println!("Initializing keyboard...");
