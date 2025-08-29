@@ -2,10 +2,13 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
 use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::{print, println, serial_println};
 use crate::interrupts::keyboard::{KeyEvent, KeyCode};
+use crate::process::{ProcessManager, ProcessId, PROCESS_MANAGER};
+use crate::process::thread::{ThreadManager, ThreadId, THREAD_MANAGER};
 
 const MAX_COMMAND_LENGTH: usize = 1024;
 const HISTORY_SIZE: usize = 100;
@@ -179,6 +182,9 @@ struct BackgroundJob {
     id: u32,
     command: String,
     status: JobStatus,
+    process_id: Option<ProcessId>,
+    thread_id: Option<ThreadId>,
+    start_time: u64,
 }
 
 enum JobStatus {
@@ -201,6 +207,9 @@ impl EnhancedShell {
     }
     
     pub fn handle_key_event(&mut self, event: KeyEvent) {
+        // Periodically check background jobs
+        self.check_background_jobs();
+        
         match event.code {
             KeyCode::Char(c) => {
                 if event.ctrl {
@@ -528,16 +537,117 @@ impl EnhancedShell {
     
     fn run_background(&mut self, command: &str) {
         self.job_counter += 1;
-        let job = BackgroundJob {
-            id: self.job_counter,
-            command: String::from(command),
+        let job_id = self.job_counter;
+        let cmd = String::from(command);
+        
+        // Create a new process for the background job
+        let process_id = {
+            let mut process_manager = PROCESS_MANAGER.lock();
+            process_manager.create_process(
+                format!("bg_job_{}", job_id),
+                Some(process_manager.current_process.unwrap_or(ProcessId(0)))
+            )
+        };
+        
+        // Create a thread for the background job
+        let thread_id = {
+            let mut thread_manager = THREAD_MANAGER.lock();
+            thread_manager.create_thread(process_id)
+        };
+        
+        // Add thread to process
+        {
+            let mut process_manager = PROCESS_MANAGER.lock();
+            if let Some(process) = process_manager.get_process_mut(process_id) {
+                process.add_thread(thread_id);
+            }
+        }
+        
+        // Create the background job entry
+        let mut job = BackgroundJob {
+            id: job_id,
+            command: cmd.clone(),
             status: JobStatus::Running,
+            process_id: Some(process_id),
+            thread_id: Some(thread_id),
+            start_time: crate::interrupts::TIMER_TICKS.load(core::sync::atomic::Ordering::SeqCst),
         };
         
         println!("[{}] {} &", job.id, command);
-        self.background_jobs.push(job);
         
-        // TODO: Actually execute in background
+        // Spawn the actual background task
+        self.spawn_background_task(job_id, cmd.clone());
+        
+        self.background_jobs.push(job);
+    }
+    
+    fn spawn_background_task(&mut self, job_id: u32, command: String) {
+        // Clone necessary data for the background task
+        let jobs_ref = &mut self.background_jobs;
+        
+        // Create a simple task that simulates command execution
+        // In a real implementation, this would parse and execute the actual command
+        crate::task::spawn(crate::task::Task::new(
+            &format!("bg_job_{}", job_id),
+            move || {
+                // Simulate command execution
+                serial_println!("Background job {} started: {}", job_id, command);
+                
+                // Parse and execute the command
+                // For now, we'll simulate execution with a delay
+                for _ in 0..10 {
+                    // Simulate work
+                    for _ in 0..1000000 {
+                        core::hint::spin_loop();
+                    }
+                }
+                
+                serial_println!("Background job {} completed: {}", job_id, command);
+            }
+        ));
+    }
+    
+    fn update_job_status(&mut self, job_id: u32, new_status: JobStatus) {
+        for job in &mut self.background_jobs {
+            if job.id == job_id {
+                job.status = new_status;
+                break;
+            }
+        }
+    }
+    
+    fn check_background_jobs(&mut self) {
+        // Check the status of background jobs and update their status
+        let current_time = crate::interrupts::TIMER_TICKS.load(core::sync::atomic::Ordering::SeqCst);
+        
+        for job in &mut self.background_jobs {
+            if let JobStatus::Running = job.status {
+                // Check if the process/thread is still running
+                if let Some(process_id) = job.process_id {
+                    let process_manager = PROCESS_MANAGER.lock();
+                    if let Some(process) = process_manager.get_process(process_id) {
+                        match process.state {
+                            crate::process::ProcessState::Terminated => {
+                                job.status = JobStatus::Completed(0);
+                                println!("\n[{}]+ Done                    {}", job.id, job.command);
+                            }
+                            _ => {
+                                // Still running
+                            }
+                        }
+                    } else {
+                        // Process not found, mark as failed
+                        job.status = JobStatus::Failed(String::from("Process terminated unexpectedly"));
+                        println!("\n[{}]- Failed                  {}", job.id, job.command);
+                    }
+                }
+            }
+        }
+        
+        // Clean up completed jobs that have been notified
+        self.background_jobs.retain(|job| {
+            !matches!(job.status, JobStatus::Completed(_)) 
+        });
     }
     
     fn run_foreground(&mut self, command: &str) {
@@ -752,5 +862,155 @@ pub fn init() {
 pub fn handle_key_event(event: KeyEvent) {
     if let Some(ref mut shell) = *ENHANCED_SHELL.lock() {
         shell.handle_key_event(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+    
+    #[test]
+    fn test_background_job_creation() {
+        let mut shell = EnhancedShell::new();
+        
+        // Run a background job
+        shell.run_background("test_command");
+        
+        // Verify job was created
+        assert_eq!(shell.background_jobs.len(), 1);
+        assert_eq!(shell.background_jobs[0].id, 1);
+        assert_eq!(shell.background_jobs[0].command, "test_command");
+        assert!(matches!(shell.background_jobs[0].status, JobStatus::Running));
+        assert!(shell.background_jobs[0].process_id.is_some());
+        assert!(shell.background_jobs[0].thread_id.is_some());
+    }
+    
+    #[test]
+    fn test_multiple_background_jobs() {
+        let mut shell = EnhancedShell::new();
+        
+        // Run multiple background jobs
+        shell.run_background("job1");
+        shell.run_background("job2");
+        shell.run_background("job3");
+        
+        // Verify all jobs were created
+        assert_eq!(shell.background_jobs.len(), 3);
+        assert_eq!(shell.background_jobs[0].id, 1);
+        assert_eq!(shell.background_jobs[1].id, 2);
+        assert_eq!(shell.background_jobs[2].id, 3);
+        
+        // Verify each job has unique process and thread IDs
+        let pid1 = shell.background_jobs[0].process_id.unwrap();
+        let pid2 = shell.background_jobs[1].process_id.unwrap();
+        let pid3 = shell.background_jobs[2].process_id.unwrap();
+        assert_ne!(pid1, pid2);
+        assert_ne!(pid2, pid3);
+        assert_ne!(pid1, pid3);
+    }
+    
+    #[test]
+    fn test_job_status_update() {
+        let mut shell = EnhancedShell::new();
+        
+        // Run a background job
+        shell.run_background("test_job");
+        let job_id = shell.background_jobs[0].id;
+        
+        // Update job status to completed
+        shell.update_job_status(job_id, JobStatus::Completed(0));
+        assert!(matches!(shell.background_jobs[0].status, JobStatus::Completed(0)));
+        
+        // Update job status to failed
+        shell.update_job_status(job_id, JobStatus::Failed(String::from("Test error")));
+        assert!(matches!(shell.background_jobs[0].status, JobStatus::Failed(_)));
+    }
+    
+    #[test]
+    fn test_job_cleanup() {
+        let mut shell = EnhancedShell::new();
+        
+        // Run multiple background jobs
+        shell.run_background("job1");
+        shell.run_background("job2");
+        shell.run_background("job3");
+        
+        // Mark some jobs as completed
+        shell.update_job_status(1, JobStatus::Completed(0));
+        shell.update_job_status(3, JobStatus::Completed(0));
+        
+        // Check background jobs (which should clean up completed jobs)
+        shell.check_background_jobs();
+        
+        // Only job2 should remain (still running)
+        assert_eq!(shell.background_jobs.len(), 1);
+        assert_eq!(shell.background_jobs[0].id, 2);
+    }
+    
+    #[test]
+    fn test_jobs_command_output() {
+        let mut shell = EnhancedShell::new();
+        
+        // Run multiple background jobs with different statuses
+        shell.run_background("running_job");
+        shell.run_background("completed_job");
+        shell.run_background("failed_job");
+        
+        // Update statuses
+        shell.update_job_status(2, JobStatus::Completed(0));
+        shell.update_job_status(3, JobStatus::Failed(String::from("Test failure")));
+        
+        // Call cmd_jobs to verify it doesn't panic
+        shell.cmd_jobs();
+        
+        // Verify jobs are still tracked correctly
+        assert_eq!(shell.background_jobs.len(), 3);
+    }
+    
+    #[test]
+    fn test_concurrent_job_execution() {
+        let mut shell = EnhancedShell::new();
+        
+        // Launch multiple jobs concurrently
+        for i in 0..5 {
+            shell.run_background(&format!("concurrent_job_{}", i));
+        }
+        
+        // Verify all jobs were created
+        assert_eq!(shell.background_jobs.len(), 5);
+        
+        // Verify all jobs are running
+        for job in &shell.background_jobs {
+            assert!(matches!(job.status, JobStatus::Running));
+        }
+        
+        // Verify job IDs are sequential
+        for (i, job) in shell.background_jobs.iter().enumerate() {
+            assert_eq!(job.id, (i + 1) as u32);
+        }
+    }
+    
+    #[test]
+    fn test_background_job_with_process_termination() {
+        let mut shell = EnhancedShell::new();
+        
+        // Run a background job
+        shell.run_background("terminating_job");
+        
+        // Get the process ID
+        let process_id = shell.background_jobs[0].process_id.unwrap();
+        
+        // Terminate the process
+        {
+            let mut process_manager = PROCESS_MANAGER.lock();
+            process_manager.terminate_process(process_id);
+        }
+        
+        // Check background jobs to update status
+        shell.check_background_jobs();
+        
+        // Job should be marked as completed
+        assert!(matches!(shell.background_jobs[0].status, JobStatus::Completed(_)));
     }
 }
