@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use alloc::string::String;
 use spin::Mutex;
 use lazy_static::lazy_static;
+use crate::process::{PROCESS_MANAGER, thread::THREAD_MANAGER};
 
 // Performance monitoring counter (PMC) MSRs
 const IA32_PERFEVTSEL0: u32 = 0x186;
@@ -496,13 +497,16 @@ pub fn disable_profiling() {
 pub extern "x86-interrupt" fn pmu_interrupt_handler(
     stack_frame: x86_64::structures::idt::InterruptStackFrame
 ) {
+    // Get current process and thread IDs in a thread-safe manner
+    let (pid, tid) = get_current_context();
+    
     // Collect sample
     let sample = ProfileSample {
         timestamp: crate::timer::rdtsc(),
         rip: stack_frame.instruction_pointer.as_u64(),
         rsp: stack_frame.stack_pointer.as_u64(),
-        pid: 0, // TODO: Get from current process
-        tid: 0, // TODO: Get from current thread
+        pid,
+        tid,
         cpu: crate::cpu::get_cpu_id(),
         in_kernel: stack_frame.code_segment == 0x08,
     };
@@ -524,4 +528,49 @@ pub extern "x86-interrupt" fn pmu_interrupt_handler(
     
     // Send EOI
     crate::interrupts::send_eoi_apic();
+}
+
+// Helper function to get current process and thread context
+// Returns (PID, TID) in a thread-safe manner
+fn get_current_context() -> (u32, u32) {
+    // Try to get thread ID first, as it's more specific
+    let tid = if let Some(thread_manager) = THREAD_MANAGER.try_lock() {
+        thread_manager.get_current_thread()
+            .map(|tid| tid.0)
+            .unwrap_or(0)
+    } else {
+        // If we can't lock, return 0 to avoid blocking in interrupt context
+        0
+    };
+    
+    // Get process ID
+    let pid = if let Some(process_manager) = PROCESS_MANAGER.try_lock() {
+        if let Some(current_pid) = process_manager.current_process {
+            current_pid.0
+        } else {
+            // Check if we have a thread and can get its process
+            if tid != 0 {
+                if let Some(thread_manager) = THREAD_MANAGER.try_lock() {
+                    if let Some(thread_id) = thread_manager.get_current_thread() {
+                        if let Some(thread) = thread_manager.get_thread(thread_id) {
+                            thread.process_id.0
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        }
+    } else {
+        // If we can't lock, return 0 to avoid blocking in interrupt context
+        0
+    };
+    
+    (pid, tid)
 }
