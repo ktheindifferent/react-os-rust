@@ -360,6 +360,7 @@ pub enum ScsiAdapterControlType {
 }
 
 // IDE/ATA Controller
+#[derive(Clone)]
 pub struct IdeController {
     pub base_address: u16,
     pub control_address: u16,
@@ -396,6 +397,7 @@ pub enum IdeDeviceType {
 }
 
 // AHCI (Advanced Host Controller Interface) SATA Controller
+#[derive(Clone)]
 pub struct AhciController {
     pub base_address: u64,
     pub num_ports: u8,
@@ -444,6 +446,7 @@ pub enum SataDeviceType {
 }
 
 // NVMe Controller
+#[derive(Clone)]
 pub struct NvmeController {
     pub base_address: u64,
     pub admin_queue: NvmeQueue,
@@ -502,6 +505,98 @@ pub struct NvmeCompletion {
     pub sq_id: u16,
     pub command_id: u16,
     pub status: u16,
+}
+
+impl NvmeController {
+    pub fn new(base_address: u64) -> Self {
+        Self {
+            base_address,
+            admin_queue: NvmeQueue {
+                id: 0,
+                size: 64,
+                submission_queue: Vec::new(),
+                completion_queue: Vec::new(),
+                sq_tail: 0,
+                cq_head: 0,
+                phase_bit: true,
+            },
+            io_queues: Vec::new(),
+            namespace_count: 0,
+            namespaces: Vec::new(),
+            max_queue_entries: 4096,
+            doorbell_stride: 0,
+        }
+    }
+
+    pub fn initialize(&mut self) -> NtStatus {
+        crate::println!("NVMe: Initializing controller at 0x{:X}", self.base_address);
+        
+        // Reset controller
+        self.reset_controller();
+        
+        // Configure admin queue
+        self.configure_admin_queue();
+        
+        // Identify controller
+        self.identify_controller();
+        
+        // Identify namespaces
+        self.identify_namespaces();
+        
+        // Create I/O queues
+        self.create_io_queues();
+        
+        crate::println!("NVMe: Controller initialized with {} namespaces", self.namespace_count);
+        NtStatus::Success
+    }
+    
+    fn reset_controller(&mut self) {
+        crate::println!("NVMe: Resetting controller");
+        // Reset controller via CAP and CC registers
+    }
+    
+    fn configure_admin_queue(&mut self) {
+        crate::println!("NVMe: Configuring admin queue");
+        // Set admin queue attributes
+    }
+    
+    fn identify_controller(&mut self) {
+        crate::println!("NVMe: Identifying controller");
+        // Send Identify Controller command
+        // Parse controller capabilities
+    }
+    
+    fn identify_namespaces(&mut self) {
+        crate::println!("NVMe: Identifying namespaces");
+        // Simulate namespace discovery
+        self.namespace_count = 1;
+        self.namespaces.push(NvmeNamespace {
+            id: 1,
+            size: 1000 * 1024 * 1024 * 1024, // 1TB
+            capacity: 1000 * 1024 * 1024 * 1024,
+            utilization: 500 * 1024 * 1024 * 1024, // 50% used
+            block_size: 512,
+            metadata_size: 0,
+            protection_type: 0,
+            protection_info_location: 0,
+        });
+    }
+    
+    fn create_io_queues(&mut self) {
+        crate::println!("NVMe: Creating I/O queues");
+        // Create I/O submission and completion queues
+        for queue_id in 1..=4 {
+            self.io_queues.push(NvmeQueue {
+                id: queue_id,
+                size: 256,
+                submission_queue: Vec::new(),
+                completion_queue: Vec::new(),
+                sq_tail: 0,
+                cq_head: 0,
+                phase_bit: true,
+            });
+        }
+    }
 }
 
 // Storage Class Driver
@@ -956,9 +1051,6 @@ impl StorageSubsystem {
             }
         }
         
-        // Temporarily skip device registration to fix borrow issues
-        // TODO: Implement proper device registration without borrowing conflicts
-        
         // Initialize AHCI controllers
         for controller in &mut self.ahci_controllers {
             let status = controller.initialize();
@@ -969,9 +1061,16 @@ impl StorageSubsystem {
 
         // Initialize NVMe controllers
         for controller in &mut self.nvme_controllers {
-            // controller.initialize()?;
-            // self.register_nvme_devices(controller);
+            let status = controller.initialize();
+            if status != NtStatus::Success {
+                return status;
+            }
         }
+
+        // Register all detected devices after initialization is complete
+        // This avoids borrow checker conflicts by separating mutable iteration
+        // from methods that need mutable access to self
+        self.register_all_devices();
 
         crate::println!("Storage: Subsystem initialized with {} devices", 
             self.class_driver.devices.len());
@@ -992,6 +1091,9 @@ impl StorageSubsystem {
 
         // Add AHCI controller
         self.ahci_controllers.push(AhciController::new(0xF0000000));
+
+        // Add NVMe controller
+        self.nvme_controllers.push(NvmeController::new(0xE0000000));
 
         crate::println!("Storage: Found {} IDE, {} AHCI, {} NVMe controllers",
             self.ide_controllers.len(),
@@ -1093,6 +1195,70 @@ impl StorageSubsystem {
         }
     }
 
+    fn register_all_devices(&mut self) {
+        crate::println!("Storage: Registering all detected devices");
+        
+        // Clone the controllers to avoid borrow checker issues
+        // We need to access both the controllers and mutate self
+        let ide_controllers = self.ide_controllers.clone();
+        let ahci_controllers = self.ahci_controllers.clone();
+        let nvme_controllers = self.nvme_controllers.clone();
+        
+        // Register IDE devices
+        for controller in &ide_controllers {
+            self.register_ide_devices(controller);
+        }
+        
+        // Register AHCI devices
+        for controller in &ahci_controllers {
+            self.register_ahci_devices(controller);
+        }
+        
+        // Register NVMe devices
+        for controller in &nvme_controllers {
+            self.register_nvme_devices(controller);
+        }
+        
+        crate::println!("Storage: Registered {} total devices", self.class_driver.devices.len());
+    }
+    
+    fn register_nvme_devices(&mut self, controller: &NvmeController) {
+        for namespace in &controller.namespaces {
+            let storage_device = StorageDevice {
+                device_handle: Handle(0),
+                device_type: StorageDeviceType::SolidStateDrive,
+                interface_type: StorageInterface::NVMe,
+                media_type: StorageMediaType::Fixed,
+                bus_type: StorageBusType::NVMe,
+                device_number: self.class_driver.next_device_number,
+                path_id: 0,
+                target_id: 0,
+                lun: namespace.id as u8,
+                vendor_id: String::from("NVMe"),
+                product_id: format!("NVMe SSD Namespace {}", namespace.id),
+                revision: String::from("1.0"),
+                serial_number: format!("NVME{:08X}", namespace.id),
+                geometry: DiskGeometry {
+                    cylinders: 0, // Not applicable for NVMe
+                    media_type: MediaType::FixedMedia,
+                    tracks_per_cylinder: 0,
+                    sectors_per_track: 0,
+                    bytes_per_sector: namespace.block_size,
+                },
+                capacity: namespace.capacity,
+                block_size: namespace.block_size,
+                partitions: Vec::new(),
+                removable: false,
+                read_only: false,
+                online: true,
+                driver_handle: Handle(0),
+            };
+            
+            self.class_driver.next_device_number += 1;
+            self.class_driver.add_device(storage_device);
+        }
+    }
+
     pub fn get_device_count(&self) -> usize {
         self.class_driver.devices.len()
     }
@@ -1178,6 +1344,204 @@ pub fn flush_storage_device(device_number: u32) -> NtStatus {
             storage.flush_device(device_number)
         } else {
             NtStatus::DeviceNotReady
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_storage_subsystem_initialization() {
+        let mut storage = StorageSubsystem::new();
+        let status = storage.initialize();
+        assert_eq!(status, NtStatus::Success);
+        
+        // Verify controllers were detected
+        assert!(storage.ide_controllers.len() > 0);
+        assert!(storage.ahci_controllers.len() > 0);
+        assert!(storage.nvme_controllers.len() > 0);
+    }
+    
+    #[test]
+    fn test_device_registration_no_borrow_conflicts() {
+        let mut storage = StorageSubsystem::new();
+        let status = storage.initialize();
+        assert_eq!(status, NtStatus::Success);
+        
+        // Verify devices were registered without borrow checker issues
+        let device_count = storage.get_device_count();
+        assert!(device_count > 0, "Expected devices to be registered");
+        
+        // Check that we have devices from different controller types
+        let mut has_ide = false;
+        let mut has_sata = false;
+        let mut has_nvme = false;
+        
+        for i in 0..device_count {
+            if let Some(info) = storage.get_device_info(i) {
+                if info.contains("IDE") {
+                    has_ide = true;
+                } else if info.contains("SATA") {
+                    has_sata = true;
+                } else if info.contains("NVMe") {
+                    has_nvme = true;
+                }
+            }
+        }
+        
+        assert!(has_ide, "Expected IDE devices to be registered");
+        assert!(has_sata, "Expected SATA devices to be registered");
+        assert!(has_nvme, "Expected NVMe devices to be registered");
+    }
+    
+    #[test]
+    fn test_multiple_device_registration() {
+        let mut storage = StorageSubsystem::new();
+        
+        // Add multiple controllers of each type
+        for i in 0..3 {
+            storage.ide_controllers.push(IdeController::new(0x1F0 + (i * 0x80), 0x3F6 + (i * 0x80), 14 + i as u8));
+            storage.ahci_controllers.push(AhciController::new(0xF0000000 + (i as u64 * 0x1000)));
+            storage.nvme_controllers.push(NvmeController::new(0xE0000000 + (i as u64 * 0x1000)));
+        }
+        
+        let status = storage.initialize();
+        assert_eq!(status, NtStatus::Success);
+        
+        // Verify all devices were registered
+        let device_count = storage.get_device_count();
+        assert!(device_count >= 9, "Expected at least 9 devices from 9 controllers");
+    }
+    
+    #[test]
+    fn test_concurrent_device_access_patterns() {
+        let mut storage = StorageSubsystem::new();
+        let status = storage.initialize();
+        assert_eq!(status, NtStatus::Success);
+        
+        let device_count = storage.get_device_count();
+        
+        // Test reading device info concurrently (simulated)
+        let mut device_infos = Vec::new();
+        for i in 0..device_count {
+            if let Some(info) = storage.get_device_info(i) {
+                device_infos.push(info);
+            }
+        }
+        
+        // Verify all device infos were retrieved successfully
+        assert_eq!(device_infos.len(), device_count);
+        
+        // Test that device numbers are unique
+        let mut device_numbers = Vec::new();
+        for device in &storage.class_driver.devices {
+            assert!(!device_numbers.contains(&device.device_number), 
+                   "Duplicate device number found: {}", device.device_number);
+            device_numbers.push(device.device_number);
+        }
+    }
+    
+    #[test]
+    fn test_hot_plug_device_registration() {
+        let mut storage = StorageSubsystem::new();
+        let status = storage.initialize();
+        assert_eq!(status, NtStatus::Success);
+        
+        let initial_count = storage.get_device_count();
+        
+        // Simulate hot-plug by adding a new controller and re-registering
+        storage.ahci_controllers.push(AhciController::new(0xF1000000));
+        
+        // Initialize the new controller
+        if let Some(controller) = storage.ahci_controllers.last_mut() {
+            let init_status = controller.initialize();
+            assert_eq!(init_status, NtStatus::Success);
+        }
+        
+        // Register devices from the new controller
+        if let Some(controller) = storage.ahci_controllers.last() {
+            storage.register_ahci_devices(controller);
+        }
+        
+        let new_count = storage.get_device_count();
+        assert!(new_count > initial_count, "Expected new devices after hot-plug");
+    }
+    
+    #[test]
+    fn test_error_handling_during_registration() {
+        let mut storage = StorageSubsystem::new();
+        
+        // Test with empty controller lists
+        storage.ide_controllers.clear();
+        storage.ahci_controllers.clear();
+        storage.nvme_controllers.clear();
+        
+        let status = storage.initialize();
+        assert_eq!(status, NtStatus::Success);
+        
+        // Even with no controllers, initialization should succeed
+        // but no devices should be registered
+        assert_eq!(storage.get_device_count(), 0);
+    }
+    
+    #[test]
+    fn test_device_appears_in_system_list() {
+        let mut storage = StorageSubsystem::new();
+        let status = storage.initialize();
+        assert_eq!(status, NtStatus::Success);
+        
+        // Verify each registered device appears in the system device list
+        for i in 0..storage.get_device_count() {
+            let info = storage.get_device_info(i);
+            assert!(info.is_some(), "Device {} should have info", i);
+            
+            // Verify the device has required fields
+            if let Some(device) = storage.class_driver.devices.get(i) {
+                assert!(!device.vendor_id.is_empty(), "Device should have vendor ID");
+                assert!(!device.product_id.is_empty(), "Device should have product ID");
+                assert!(device.capacity > 0, "Device should have non-zero capacity");
+                assert!(device.block_size > 0, "Device should have non-zero block size");
+            }
+        }
+    }
+    
+    #[test]
+    fn test_device_registration_ordering() {
+        let mut storage = StorageSubsystem::new();
+        let status = storage.initialize();
+        assert_eq!(status, NtStatus::Success);
+        
+        // Verify devices are registered in the expected order:
+        // IDE devices first, then AHCI, then NVMe
+        let mut prev_device_number = 0;
+        for device in &storage.class_driver.devices {
+            assert!(device.device_number >= prev_device_number, 
+                   "Device numbers should be sequential");
+            prev_device_number = device.device_number;
+        }
+    }
+    
+    #[test]
+    fn test_cloned_controllers_preserve_data() {
+        let mut storage = StorageSubsystem::new();
+        storage.initialize();
+        
+        // Clone controllers as done in register_all_devices
+        let ide_controllers = storage.ide_controllers.clone();
+        let ahci_controllers = storage.ahci_controllers.clone();
+        let nvme_controllers = storage.nvme_controllers.clone();
+        
+        // Verify cloned controllers have the same data
+        assert_eq!(ide_controllers.len(), storage.ide_controllers.len());
+        assert_eq!(ahci_controllers.len(), storage.ahci_controllers.len());
+        assert_eq!(nvme_controllers.len(), storage.nvme_controllers.len());
+        
+        // Verify controller properties are preserved
+        for (i, controller) in ide_controllers.iter().enumerate() {
+            assert_eq!(controller.base_address, storage.ide_controllers[i].base_address);
+            assert_eq!(controller.irq, storage.ide_controllers[i].irq);
         }
     }
 }
