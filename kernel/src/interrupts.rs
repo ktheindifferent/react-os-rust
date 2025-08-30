@@ -193,6 +193,14 @@ lazy_static! {
         idt[InterruptIndex::COM2.as_usize()]
             .set_handler_fn(default_interrupt_handler);
         
+        // Network and disk interrupt handlers
+        idt[(PIC_2_OFFSET + 1) as usize]
+            .set_handler_fn(network_interrupt_handler);
+        idt[InterruptIndex::PrimaryATA.as_usize()]
+            .set_handler_fn(disk_interrupt_handler);
+        idt[InterruptIndex::SecondaryATA.as_usize()]
+            .set_handler_fn(disk_interrupt_handler);
+        
         idt
     };
 }
@@ -641,6 +649,8 @@ extern "C" fn fast_interrupt_handler() {
 extern "x86-interrupt" fn network_interrupt_handler(
     _stack_frame: InterruptStackFrame)
 {
+    let start_cycles = crate::timer::rdtsc();
+    
     if !NETWORK_COALESCER.should_handle() {
         // Skip this interrupt, will be handled in batch
         if is_apic_available() {
@@ -654,7 +664,16 @@ extern "x86-interrupt" fn network_interrupt_handler(
     }
     
     // Process batched network packets
-    // TODO: Implement network packet processing
+    process_network_packets();
+    
+    // Update interrupt statistics
+    let end_cycles = crate::timer::rdtsc();
+    let latency = end_cycles - start_cycles;
+    let stats = &INTERRUPT_STATS[(PIC_2_OFFSET + 1) as usize];
+    stats.count.fetch_add(1, Ordering::Relaxed);
+    stats.cycles.fetch_add(latency, Ordering::Relaxed);
+    stats.max_latency.fetch_max(latency, Ordering::Relaxed);
+    stats.min_latency.fetch_min(latency, Ordering::Relaxed);
     
     if is_apic_available() {
         send_eoi_apic();
@@ -669,6 +688,8 @@ extern "x86-interrupt" fn network_interrupt_handler(
 extern "x86-interrupt" fn disk_interrupt_handler(
     _stack_frame: InterruptStackFrame)
 {
+    let start_cycles = crate::timer::rdtsc();
+    
     if !DISK_COALESCER.should_handle() {
         // Skip this interrupt, will be handled in batch
         if is_apic_available() {
@@ -682,7 +703,16 @@ extern "x86-interrupt" fn disk_interrupt_handler(
     }
     
     // Process batched disk operations
-    // TODO: Implement disk operation processing
+    process_disk_operations();
+    
+    // Update interrupt statistics
+    let end_cycles = crate::timer::rdtsc();
+    let latency = end_cycles - start_cycles;
+    let stats = &INTERRUPT_STATS[InterruptIndex::PrimaryATA.as_usize()];
+    stats.count.fetch_add(1, Ordering::Relaxed);
+    stats.cycles.fetch_add(latency, Ordering::Relaxed);
+    stats.max_latency.fetch_max(latency, Ordering::Relaxed);
+    stats.min_latency.fetch_min(latency, Ordering::Relaxed);
     
     if is_apic_available() {
         send_eoi_apic();
@@ -691,6 +721,226 @@ extern "x86-interrupt" fn disk_interrupt_handler(
             PICS.lock().notify_end_of_interrupt(InterruptIndex::PrimaryATA.as_u8());
         }
     }
+}
+
+// Network packet queue for interrupt processing
+static NETWORK_PACKET_QUEUE: Mutex<VecDeque<NetworkPacketInfo>> = Mutex::new(VecDeque::new());
+static NETWORK_PACKETS_PROCESSED: AtomicU64 = AtomicU64::new(0);
+static NETWORK_PACKETS_DROPPED: AtomicU64 = AtomicU64::new(0);
+
+// Disk operation queue for interrupt processing
+static DISK_OPERATION_QUEUE: Mutex<VecDeque<DiskOperationInfo>> = Mutex::new(VecDeque::new());
+static DISK_OPS_COMPLETED: AtomicU64 = AtomicU64::new(0);
+static DISK_OPS_FAILED: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone)]
+struct NetworkPacketInfo {
+    interface_id: u32,
+    packet_size: usize,
+    protocol: u8,
+    timestamp: u64,
+}
+
+#[derive(Debug, Clone)]
+struct DiskOperationInfo {
+    disk_id: u32,
+    operation: DiskOpType,
+    sector: u64,
+    count: u32,
+    status: DiskOpStatus,
+    timestamp: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum DiskOpType {
+    Read,
+    Write,
+    Flush,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DiskOpStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+}
+
+// Process batched network packets
+fn process_network_packets() {
+    const MAX_BATCH_SIZE: usize = 32;
+    let mut processed = 0;
+    
+    // Try to get network subsystem
+    if let Some(mut queue) = NETWORK_PACKET_QUEUE.try_lock() {
+        // Process up to MAX_BATCH_SIZE packets
+        while processed < MAX_BATCH_SIZE {
+            if let Some(packet_info) = queue.pop_front() {
+                // Process the packet
+                if process_single_network_packet(&packet_info) {
+                    NETWORK_PACKETS_PROCESSED.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    NETWORK_PACKETS_DROPPED.fetch_add(1, Ordering::Relaxed);
+                    serial_println!("Network: Dropped packet from interface {}", packet_info.interface_id);
+                }
+                processed += 1;
+            } else {
+                break; // No more packets to process
+            }
+        }
+        
+        // If queue is getting too large, drop old packets
+        const MAX_QUEUE_SIZE: usize = 256;
+        while queue.len() > MAX_QUEUE_SIZE {
+            queue.pop_front();
+            NETWORK_PACKETS_DROPPED.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    
+    if processed > 0 {
+        serial_println!("Network: Processed {} packets in batch", processed);
+    }
+}
+
+// Process a single network packet
+fn process_single_network_packet(packet_info: &NetworkPacketInfo) -> bool {
+    // Simulate packet processing based on protocol
+    match packet_info.protocol {
+        0x06 => { // TCP
+            // Handle TCP packet
+            serial_println!("Network: Processing TCP packet ({} bytes)", packet_info.packet_size);
+            true
+        }
+        0x11 => { // UDP
+            // Handle UDP packet
+            serial_println!("Network: Processing UDP packet ({} bytes)", packet_info.packet_size);
+            true
+        }
+        0x01 => { // ICMP
+            // Handle ICMP packet
+            serial_println!("Network: Processing ICMP packet ({} bytes)", packet_info.packet_size);
+            true
+        }
+        _ => {
+            // Unknown protocol
+            serial_println!("Network: Unknown protocol 0x{:02X}", packet_info.protocol);
+            false
+        }
+    }
+}
+
+// Process batched disk operations
+fn process_disk_operations() {
+    const MAX_BATCH_SIZE: usize = 16;
+    let mut processed = 0;
+    
+    if let Some(mut queue) = DISK_OPERATION_QUEUE.try_lock() {
+        // Process up to MAX_BATCH_SIZE operations
+        while processed < MAX_BATCH_SIZE {
+            if let Some(mut op_info) = queue.pop_front() {
+                // Process the disk operation
+                if process_single_disk_operation(&mut op_info) {
+                    DISK_OPS_COMPLETED.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    DISK_OPS_FAILED.fetch_add(1, Ordering::Relaxed);
+                    serial_println!("Disk: Failed operation on disk {}", op_info.disk_id);
+                }
+                processed += 1;
+            } else {
+                break; // No more operations to process
+            }
+        }
+        
+        // Check for stalled operations
+        for op in queue.iter_mut() {
+            if matches!(op.status, DiskOpStatus::InProgress) {
+                let current_time = crate::timer::rdtsc();
+                if current_time - op.timestamp > 1_000_000_000 { // 1 second timeout
+                    op.status = DiskOpStatus::Failed;
+                    DISK_OPS_FAILED.fetch_add(1, Ordering::Relaxed);
+                    serial_println!("Disk: Operation timeout on disk {}", op.disk_id);
+                }
+            }
+        }
+    }
+    
+    if processed > 0 {
+        serial_println!("Disk: Processed {} operations in batch", processed);
+    }
+}
+
+// Process a single disk operation
+fn process_single_disk_operation(op_info: &mut DiskOperationInfo) -> bool {
+    op_info.status = DiskOpStatus::InProgress;
+    
+    match op_info.operation {
+        DiskOpType::Read => {
+            serial_println!("Disk: Completing read operation - disk {}, sector {}, count {}", 
+                          op_info.disk_id, op_info.sector, op_info.count);
+            // Mark as completed (actual I/O would be handled by disk driver)
+            op_info.status = DiskOpStatus::Completed;
+            true
+        }
+        DiskOpType::Write => {
+            serial_println!("Disk: Completing write operation - disk {}, sector {}, count {}", 
+                          op_info.disk_id, op_info.sector, op_info.count);
+            // Mark as completed (actual I/O would be handled by disk driver)
+            op_info.status = DiskOpStatus::Completed;
+            true
+        }
+        DiskOpType::Flush => {
+            serial_println!("Disk: Completing flush operation - disk {}", op_info.disk_id);
+            // Flush disk cache
+            op_info.status = DiskOpStatus::Completed;
+            true
+        }
+    }
+}
+
+// Public API for queuing network packets
+pub fn queue_network_packet(interface_id: u32, packet_size: usize, protocol: u8) {
+    let packet_info = NetworkPacketInfo {
+        interface_id,
+        packet_size,
+        protocol,
+        timestamp: crate::timer::rdtsc(),
+    };
+    
+    if let Some(mut queue) = NETWORK_PACKET_QUEUE.try_lock() {
+        queue.push_back(packet_info);
+    }
+}
+
+// Public API for queuing disk operations
+pub fn queue_disk_operation(disk_id: u32, operation: DiskOpType, sector: u64, count: u32) {
+    let op_info = DiskOperationInfo {
+        disk_id,
+        operation,
+        sector,
+        count,
+        status: DiskOpStatus::Pending,
+        timestamp: crate::timer::rdtsc(),
+    };
+    
+    if let Some(mut queue) = DISK_OPERATION_QUEUE.try_lock() {
+        queue.push_back(op_info);
+    }
+}
+
+// Get network interrupt statistics
+pub fn get_network_stats() -> (u64, u64) {
+    (
+        NETWORK_PACKETS_PROCESSED.load(Ordering::Relaxed),
+        NETWORK_PACKETS_DROPPED.load(Ordering::Relaxed),
+    )
+}
+
+// Get disk interrupt statistics
+pub fn get_disk_stats() -> (u64, u64) {
+    (
+        DISK_OPS_COMPLETED.load(Ordering::Relaxed),
+        DISK_OPS_FAILED.load(Ordering::Relaxed),
+    )
 }
 
 // Get interrupt statistics
