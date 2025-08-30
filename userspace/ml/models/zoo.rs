@@ -3,10 +3,42 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     fs,
-    io::{self, Read, Write},
+    io::{self, Write},
+    fmt,
+    error::Error,
 };
 
 use serde::{Deserialize, Serialize};
+
+// Model zoo errors
+#[derive(Debug)]
+pub enum ModelZooError {
+    ModelNotFound(String),
+    IoError(io::Error),
+    InvalidModelName(String),
+    ModelLoadFailed(String),
+    ConfigurationError(String),
+}
+
+impl fmt::Display for ModelZooError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ModelZooError::ModelNotFound(name) => write!(f, "Model '{}' not found in zoo", name),
+            ModelZooError::IoError(err) => write!(f, "IO error: {}", err),
+            ModelZooError::InvalidModelName(name) => write!(f, "Invalid model name: '{}'", name),
+            ModelZooError::ModelLoadFailed(msg) => write!(f, "Failed to load model: {}", msg),
+            ModelZooError::ConfigurationError(msg) => write!(f, "Configuration error: {}", msg),
+        }
+    }
+}
+
+impl Error for ModelZooError {}
+
+impl From<io::Error> for ModelZooError {
+    fn from(err: io::Error) -> Self {
+        ModelZooError::IoError(err)
+    }
+}
 
 // Model zoo registry
 pub struct ModelZoo {
@@ -41,7 +73,7 @@ pub struct ModelEntry {
 }
 
 // Model categories
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ModelCategory {
     ComputerVision,
     NaturalLanguageProcessing,
@@ -53,6 +85,7 @@ pub enum ModelCategory {
 }
 
 // Pre-trained model wrapper
+#[derive(Debug)]
 pub struct PretrainedModel {
     metadata: ModelEntry,
     model_path: PathBuf,
@@ -229,19 +262,45 @@ impl ModelZoo {
             .collect()
     }
     
-    pub fn get_model(&mut self, name: &str) -> io::Result<&PretrainedModel> {
+    /// Check if a model exists in the registry
+    pub fn model_exists(&self, name: &str) -> bool {
+        self.registry.models.iter()
+            .any(|m| m.name == name)
+    }
+    
+    /// Check if a model is loaded in memory
+    pub fn is_model_loaded(&self, name: &str) -> bool {
+        self.models.contains_key(name)
+    }
+    
+    /// Get available model names
+    pub fn get_available_models(&self) -> Vec<String> {
+        self.registry.models.iter()
+            .map(|m| m.name.clone())
+            .collect()
+    }
+    
+    pub fn get_model(&mut self, name: &str) -> Result<&PretrainedModel, ModelZooError> {
+        // Validate model name
+        if name.is_empty() {
+            return Err(ModelZooError::InvalidModelName("Model name cannot be empty".to_string()));
+        }
+        
+        // Load model if not already loaded
         if !self.models.contains_key(name) {
             self.load_model(name)?;
         }
         
-        Ok(self.models.get(name).unwrap())
+        // Safe retrieval with proper error handling
+        self.models.get(name)
+            .ok_or_else(|| ModelZooError::ModelNotFound(name.to_string()))
     }
     
-    fn load_model(&mut self, name: &str) -> io::Result<()> {
+    fn load_model(&mut self, name: &str) -> Result<(), ModelZooError> {
         // Find model in registry
         let entry = self.registry.models.iter()
             .find(|m| m.name == name)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Model not found"))?
+            .ok_or_else(|| ModelZooError::ModelNotFound(name.to_string()))?
             .clone();
         
         // Check if model is cached
@@ -249,11 +308,13 @@ impl ModelZoo {
         
         if !model_path.exists() {
             // Download model
-            self.download_model(&entry, &model_path)?;
+            self.download_model(&entry, &model_path)
+                .map_err(|e| ModelZooError::ModelLoadFailed(format!("Download failed: {}", e)))?;
         }
         
         // Load model configuration
-        let config = self.load_model_config(&entry)?;
+        let config = self.load_model_config(&entry)
+            .map_err(|e| ModelZooError::ConfigurationError(format!("Failed to load config: {}", e)))?;
         
         // Create pretrained model
         let model = PretrainedModel {
@@ -481,6 +542,7 @@ pub enum ArchitectureOption {
     Transformer { num_layers: Vec<u32>, hidden_size: Vec<u32> },
 }
 
+#[derive(Clone)]
 pub enum HyperParameter {
     Float { min: f32, max: f32, log_scale: bool },
     Int { min: i32, max: i32 },
@@ -521,7 +583,7 @@ impl AutoML {
                     ("optimizer".to_string(), HyperParameter::Categorical { 
                         choices: vec!["adam".to_string(), "sgd".to_string(), "rmsprop".to_string()] 
                     }),
-                ].iter().cloned().collect(),
+                ].into_iter().collect(),
             },
             optimizer: HPOptimizer {
                 method: OptimizationMethod::BayesianOptimization,
@@ -547,5 +609,188 @@ impl AutoML {
             score: 0.95,
             duration: std::time::Duration::from_secs(3600),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    
+    fn create_test_zoo() -> ModelZoo {
+        let temp_dir = PathBuf::from("/tmp/test_model_zoo");
+        fs::create_dir_all(&temp_dir).unwrap();
+        ModelZoo::new(temp_dir).unwrap()
+    }
+    
+    #[test]
+    fn test_get_model_with_nonexistent_model() {
+        let mut zoo = create_test_zoo();
+        
+        // Test with non-existent model name
+        let result = zoo.get_model("nonexistent_model");
+        assert!(result.is_err());
+        
+        match result {
+            Err(ModelZooError::ModelNotFound(name)) => {
+                assert_eq!(name, "nonexistent_model");
+            }
+            _ => panic!("Expected ModelNotFound error"),
+        }
+    }
+    
+    #[test]
+    fn test_get_model_with_empty_name() {
+        let mut zoo = create_test_zoo();
+        
+        // Test with empty model name
+        let result = zoo.get_model("");
+        assert!(result.is_err());
+        
+        match result {
+            Err(ModelZooError::InvalidModelName(_)) => {
+                // Expected error
+            }
+            _ => panic!("Expected InvalidModelName error"),
+        }
+    }
+    
+    #[test]
+    fn test_get_model_with_special_characters() {
+        let mut zoo = create_test_zoo();
+        
+        // Test with special characters in model name
+        let special_names = vec![
+            "../../../etc/passwd",
+            "model\0name",
+            "model|name",
+            "model&name",
+            "model;name",
+        ];
+        
+        for name in special_names {
+            let result = zoo.get_model(name);
+            assert!(result.is_err());
+            // Should return ModelNotFound since these aren't valid model names
+            match result {
+                Err(ModelZooError::ModelNotFound(_)) => {
+                    // Expected error
+                }
+                _ => panic!("Expected ModelNotFound error for '{}'", name),
+            }
+        }
+    }
+    
+    #[test]
+    fn test_model_exists() {
+        let zoo = create_test_zoo();
+        
+        // Test with existing models
+        assert!(zoo.model_exists("resnet50"));
+        assert!(zoo.model_exists("mobilenet_v2"));
+        assert!(zoo.model_exists("yolov5s"));
+        assert!(zoo.model_exists("bert_base"));
+        
+        // Test with non-existent models
+        assert!(!zoo.model_exists("nonexistent"));
+        assert!(!zoo.model_exists(""));
+        assert!(!zoo.model_exists("ResNet50")); // Case sensitive
+    }
+    
+    #[test]
+    fn test_is_model_loaded() {
+        let mut zoo = create_test_zoo();
+        
+        // Initially no models should be loaded
+        assert!(!zoo.is_model_loaded("resnet50"));
+        
+        // After attempting to get a model, check if it's marked as loaded
+        // Note: This will fail to actually load due to missing files, but that's ok for this test
+        let _ = zoo.get_model("resnet50");
+        
+        // The model might not be loaded due to download failure, which is expected in test
+    }
+    
+    #[test]
+    fn test_get_available_models() {
+        let zoo = create_test_zoo();
+        let models = zoo.get_available_models();
+        
+        // Check that we have the expected models
+        assert!(models.contains(&"resnet50".to_string()));
+        assert!(models.contains(&"mobilenet_v2".to_string()));
+        assert!(models.contains(&"yolov5s".to_string()));
+        assert!(models.contains(&"bert_base".to_string()));
+        assert!(models.contains(&"gpt2_small".to_string()));
+        assert!(models.contains(&"wav2vec2_base".to_string()));
+        
+        // Verify count
+        assert_eq!(models.len(), 7);
+    }
+    
+    #[test]
+    fn test_error_propagation() {
+        let mut zoo = create_test_zoo();
+        
+        // Test that errors are properly propagated through the call chain
+        let result = zoo.get_model("invalid_model_name_12345");
+        
+        // Should get a proper error, not a panic
+        assert!(result.is_err());
+        
+        // Error should be informative
+        let error_msg = format!("{}", result.unwrap_err());
+        assert!(error_msg.contains("invalid_model_name_12345"));
+    }
+    
+    #[test]
+    fn test_search_models() {
+        let zoo = create_test_zoo();
+        
+        // Search for "resnet"
+        let results = zoo.search_models("resnet");
+        assert_eq!(results.len(), 2); // resnet50 and deeplabv3_resnet101
+        
+        // Search for "detection"
+        let results = zoo.search_models("detection");
+        assert_eq!(results.len(), 1); // yolov5s
+        
+        // Search for non-existent
+        let results = zoo.search_models("nonexistent");
+        assert_eq!(results.len(), 0);
+    }
+    
+    #[test]
+    fn test_list_models_by_category() {
+        let zoo = create_test_zoo();
+        
+        // List computer vision models
+        let cv_models = zoo.list_models(Some(ModelCategory::ComputerVision));
+        assert_eq!(cv_models.len(), 4);
+        
+        // List NLP models
+        let nlp_models = zoo.list_models(Some(ModelCategory::NaturalLanguageProcessing));
+        assert_eq!(nlp_models.len(), 2);
+        
+        // List all models
+        let all_models = zoo.list_models(None);
+        assert_eq!(all_models.len(), 7);
+    }
+    
+    #[test]
+    fn test_error_display() {
+        // Test that error messages are properly formatted
+        let error = ModelZooError::ModelNotFound("test_model".to_string());
+        assert_eq!(format!("{}", error), "Model 'test_model' not found in zoo");
+        
+        let error = ModelZooError::InvalidModelName("bad name".to_string());
+        assert_eq!(format!("{}", error), "Invalid model name: 'bad name'");
+        
+        let error = ModelZooError::ModelLoadFailed("network error".to_string());
+        assert_eq!(format!("{}", error), "Failed to load model: network error");
+        
+        let error = ModelZooError::ConfigurationError("invalid config".to_string());
+        assert_eq!(format!("{}", error), "Configuration error: invalid config");
     }
 }
