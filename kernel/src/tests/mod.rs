@@ -14,6 +14,7 @@ pub mod tcp_tests;
 pub mod tcp_stress_tests;
 pub mod allocator_bench;
 pub mod virtualization_tests;
+pub mod interrupt_tests;
 
 use crate::{serial_print, serial_println};
 
